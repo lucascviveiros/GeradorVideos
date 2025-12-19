@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Outputs
+out/
+*.mp4
+*.mov
+*.mkv
+
+# Media assets (opcional – recomendo ignorar)
+audio/
+clips/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/

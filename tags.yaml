@@ -1,0 +1,73 @@
+# Ordem importa: em empate, a primeira tag ganha (prioridade)
+tags:
+  debt_pressure:
+    - "dívida"
+    - "dividas"
+    - "endividamento"
+    - "pressão"
+    - "pressao"
+    - "cortes"
+    - "sacrifícios"
+    - "sacrificios"
+    - "contas"
+
+  office_night:
+    - "trabalho"
+    - "horas"
+    - "tarefas"
+    - "urgência"
+    - "urgencia"
+    - "salário"
+    - "salario"
+    - "recompensa"
+
+  multitask:
+    - "renda extra"
+    - "atividades"
+    - "fontes"
+    - "fragmentação"
+    - "fragmentacao"
+    - "complexidade"
+    - "tempo"
+
+  repetition_loop:
+    - "ciclo"
+    - "repete"
+    - "repetição"
+    - "repeticao"
+    - "não muda"
+    - "nao muda"
+    - "estável"
+    - "estavel"
+    - "retorno"
+
+  corridor_limit:
+    - "teto"
+    - "estreito"
+    - "limite"
+    - "não expande"
+    - "nao expande"
+    - "frustração"
+    - "frustracao"
+
+  architecture:
+    - "sistema"
+    - "sistemas"
+    - "estrutura"
+    - "mecanismo"
+    - "lógica"
+    - "logica"
+    - "modelo"
+    - "limites"
+    - "invisível"
+    - "invisivel"
+
+  abstract_dark:
+    - "padrão"
+    - "padrao"
+    - "comportamental"
+    - "financeira"
+    - "financeiro"
+    - "intensidade"
+    - "eficiência"
+    - "eficiencia"
