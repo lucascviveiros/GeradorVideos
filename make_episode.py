@@ -1,7 +1,9 @@
 import argparse
 import os
+import platform
 import random
 import re
+import subprocess
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,7 +11,7 @@ from typing import Dict, List, Optional, Tuple
 
 import yaml
 
-# Import robusto (alguns ambientes preferem moviepy.editor)
+# Import robusto (MoviePy 1.x vs 2.x + diferentes layouts)
 try:
     from moviepy.editor import AudioFileClip, VideoFileClip, concatenate_videoclips
 except Exception:
@@ -18,6 +20,9 @@ except Exception:
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".m4v", ".webm"}
 
 
+# --------------------------
+# Utils
+# --------------------------
 def _norm(s: str) -> str:
     s = s.lower().strip()
     s = unicodedata.normalize("NFKD", s)
@@ -27,19 +32,9 @@ def _norm(s: str) -> str:
 
 
 def resolve_path(user_path: str, must_exist: bool = False, is_dir: bool = False) -> Path:
-    """
-    Resolve path robustly on Windows/Unix:
-      - expands ~
-      - resolves relative to current working directory
-      - normalizes
-    """
     p = Path(user_path).expanduser()
-
-    # Se for relativo, resolve contra cwd
     if not p.is_absolute():
         p = (Path.cwd() / p)
-
-    # Resolve sem exigir que exista (senão explode em alguns casos)
     p = p.resolve(strict=False)
 
     if must_exist:
@@ -47,7 +42,6 @@ def resolve_path(user_path: str, must_exist: bool = False, is_dir: bool = False)
             raise RuntimeError(f"Pasta não encontrada: {p}")
         if not is_dir and not p.is_file():
             raise RuntimeError(f"Arquivo não encontrado: {p}")
-
     return p
 
 
@@ -60,13 +54,165 @@ def debug_path_report(label: str, p: Path):
         try:
             entries = list(p.parent.iterdir())
             print(f"  parent: {p.parent} (itens: {len(entries)})")
-            # Mostra até 15 itens
             for e in entries[:15]:
                 print(f"    - {e.name}")
         except Exception as ex:
             print(f"  não consegui listar parent: {ex}")
 
 
+def _subclip_compat(clip: VideoFileClip, start: float, end: float) -> VideoFileClip:
+    """
+    Compat MoviePy 1.x (subclip) e 2.x (subclipped).
+    """
+    if hasattr(clip, "subclip"):
+        return clip.subclip(start, end)
+    if hasattr(clip, "subclipped"):
+        return clip.subclipped(start, end)
+    raise RuntimeError("MoviePy: não encontrei subclip/subclipped nesta versão.")
+
+
+# --------------------------
+# FFmpeg detection + codec selection
+# --------------------------
+def ffmpeg_encoders_text() -> str:
+    try:
+        r = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True)
+        return (r.stdout or "") + "\n" + (r.stderr or "")
+    except Exception:
+        return ""
+
+
+def ffmpeg_has_encoder(encoder_name: str, encoders_dump: Optional[str] = None) -> bool:
+    dump = encoders_dump if encoders_dump is not None else ffmpeg_encoders_text()
+    if not dump:
+        return False
+    # procura linha contendo o encoder (evita falso positivo em help)
+    return re.search(rf"\b{re.escape(encoder_name)}\b", dump) is not None
+
+
+def pick_default_vcodec_auto(encoders_dump: Optional[str] = None) -> str:
+    """
+    Heurística:
+      - Windows: preferir h264_nvenc se disponível
+      - macOS: preferir h264_videotoolbox se disponível
+      - fallback: libx264
+    """
+    sysname = platform.system().lower()
+
+    if "windows" in sysname:
+        if ffmpeg_has_encoder("h264_nvenc", encoders_dump):
+            return "h264_nvenc"
+        # opcional: hevc_nvenc se preferir H.265
+        # if ffmpeg_has_encoder("hevc_nvenc", encoders_dump): return "hevc_nvenc"
+
+    if "darwin" in sysname or "mac" in sysname:
+        if ffmpeg_has_encoder("h264_videotoolbox", encoders_dump):
+            return "h264_videotoolbox"
+        # if ffmpeg_has_encoder("hevc_videotoolbox", encoders_dump): return "hevc_videotoolbox"
+
+    return "libx264"
+
+
+from typing import Dict, List, Optional
+
+
+def build_write_kwargs(
+    vcodec: str,
+    preset: str,
+    nvenc_preset: str,
+    crf: int,
+    bitrate: Optional[str],
+    audio_bitrate: str,
+    threads: int,
+) -> Dict:
+    """
+    Monta kwargs para video.write_videofile.
+
+    Regras importantes:
+    - MoviePy só repassa corretamente alguns argumentos nativos.
+    - Para NVENC e ajustes avançados, SEMPRE usar ffmpeg_params.
+    - Presets precisam ser compatíveis com o encoder, senão o FFmpeg aborta.
+    """
+
+    kwargs: Dict = {
+        "codec": vcodec,
+        "audio_codec": "aac",
+        "audio_bitrate": audio_bitrate,
+        "threads": threads,
+    }
+
+    ffmpeg_params: List[str] = []
+
+    # Bitrate fixo (opcional)
+    if bitrate:
+        kwargs["bitrate"] = bitrate
+
+    # -----------------------------
+    # libx264 (CPU)
+    # -----------------------------
+    if vcodec == "libx264":
+        # Presets válidos x264:
+        # ultrafast/superfast/veryfast/faster/fast/medium/slow/slower/veryslow
+        kwargs["preset"] = preset
+
+        ffmpeg_params += [
+            "-crf", str(crf),
+            "-pix_fmt", "yuv420p",
+            "-profile:v", "high",
+        ]
+
+    # -----------------------------
+    # NVENC (NVIDIA GPU)
+    # -----------------------------
+    elif vcodec in ("h264_nvenc", "hevc_nvenc"):
+        # Presets válidos para h264_nvenc / hevc_nvenc
+        # NÃO usar p1..p7 aqui
+        nvenc_presets_validos = {
+            "default",
+            "slow",
+            "medium",
+            "fast",
+            "hp",
+            "hq",
+            "bd",
+            "ll",
+            "llhq",
+            "llhp",
+            "lossless",
+            "losslesshp",
+        }
+
+        preset_final = nvenc_preset if nvenc_preset in nvenc_presets_validos else "hq"
+
+        ffmpeg_params += [
+            "-preset", preset_final,
+            "-rc", "vbr",
+            "-cq", "19",
+            "-pix_fmt", "yuv420p",
+            "-profile:v", "high",
+        ]
+
+    # -----------------------------
+    # VideoToolbox (macOS)
+    # -----------------------------
+    elif vcodec in ("h264_videotoolbox", "hevc_videotoolbox"):
+        # Presets são limitados; foco é compatibilidade
+        ffmpeg_params += [
+            "-pix_fmt", "yuv420p"
+        ]
+
+    # -----------------------------
+    # Finalização
+    # -----------------------------
+    if ffmpeg_params:
+        kwargs["ffmpeg_params"] = ffmpeg_params
+
+    return kwargs
+
+
+# --------------------------
+# Tags + paragraphs
+# --------------------------
 def load_tags_yaml(path: Path) -> Tuple[List[str], Dict[str, List[str]]]:
     if not path.is_file():
         raise RuntimeError(f"tags.yaml não encontrado: {path}")
@@ -88,18 +234,7 @@ def read_paragraphs(text_path: Path, debug_paths: bool = False) -> List[str]:
         debug_path_report("text_path", text_path)
 
     if not text_path.is_file():
-        # tentativa extra: glob no parent (ajuda quando nome está levemente diferente)
-        parent = text_path.parent
-        candidates = []
-        if parent.exists():
-            stem = text_path.stem.lower()
-            for f in parent.glob("*.txt"):
-                if f.stem.lower() == stem:
-                    candidates.append(f)
-        msg = f"Roteiro não encontrado: {text_path}"
-        if candidates:
-            msg += f"\nSugestão: encontrei arquivo(s) parecido(s): " + ", ".join(str(c) for c in candidates)
-        raise RuntimeError(msg)
+        raise RuntimeError(f"Roteiro não encontrado: {text_path}")
 
     raw = text_path.read_text(encoding="utf-8").strip()
     parts = re.split(r"\n\s*\n+", raw)
@@ -164,6 +299,7 @@ def pick_clip(clips: List[Path], rng: random.Random, last_used: Optional[Path]) 
     if not clips:
         raise RuntimeError("Lista de clipes vazia.")
 
+    # tenta não repetir imediatamente
     if last_used and len(clips) > 1:
         for _ in range(8):
             c = rng.choice(clips)
@@ -174,14 +310,14 @@ def pick_clip(clips: List[Path], rng: random.Random, last_used: Optional[Path]) 
 
 def loop_or_trim(clip: VideoFileClip, target_dur: float) -> VideoFileClip:
     if target_dur <= 0:
-        return clip.subclip(0, 0.01)
+        return _subclip_compat(clip, 0, 0.01)
 
     if clip.duration >= target_dur:
-        return clip.subclip(0, target_dur)
+        return _subclip_compat(clip, 0, target_dur)
 
     reps = int(target_dur // clip.duration) + 1
-    looped = concatenate_videoclips([clip] * reps).subclip(0, target_dur)
-    return looped
+    looped = concatenate_videoclips([clip] * reps)
+    return _subclip_compat(looped, 0, target_dur)
 
 
 @dataclass
@@ -280,15 +416,56 @@ def build_scenes(
     return scenes
 
 
-def render_video(scenes: List[Scene], audio_path: Path, out_path: Path, fps: int):
+def render_video(
+    scenes: List[Scene],
+    audio_path: Path,
+    out_path: Path,
+    fps: int,
+    vcodec: str,
+    preset: str,
+    nvenc_preset: str,
+    crf: int,
+    bitrate: Optional[str],
+    audio_bitrate: str,
+    debug_ffmpeg: bool,
+):
     out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    enc_dump = ffmpeg_encoders_text()
+    if debug_ffmpeg:
+        print("\n[DEBUG] ffmpeg encoders: procurando suporte...")
+        for name in ("h264_nvenc", "hevc_nvenc", "h264_videotoolbox", "hevc_videotoolbox", "libx264"):
+            print(f"  {name}: {ffmpeg_has_encoder(name, enc_dump)}")
+
+    # auto codec selection
+    if vcodec == "auto":
+        vcodec = pick_default_vcodec_auto(enc_dump)
+        print(f"[INFO] vcodec auto selecionado: {vcodec}")
+
+    # valida codec escolhido (se não suportado, cai para libx264)
+    if vcodec != "libx264" and not ffmpeg_has_encoder(vcodec, enc_dump):
+        print(f"[WARN] ffmpeg não suporta '{vcodec}'. Caindo para libx264.")
+        vcodec = "libx264"
+
+    threads = os.cpu_count() or 4
+    # NVENC / VideoToolbox não se beneficia de threads do mesmo jeito — mas não atrapalha.
+    write_kwargs = build_write_kwargs(
+        vcodec=vcodec,
+        preset=preset,
+        nvenc_preset=nvenc_preset,
+        crf=crf,
+        bitrate=bitrate,
+        audio_bitrate=audio_bitrate,
+        threads=threads,
+    )
 
     audio = AudioFileClip(str(audio_path))
     timeline: List[VideoFileClip] = []
 
     try:
         for sc in scenes:
-            base = VideoFileClip(str(sc.clip_path))
+            base = VideoFileClip(str(sc.clip_path), audio=False)
+            #base = VideoFileClip(str(sc.clip_path))
             seg = loop_or_trim(base, sc.duration)
             timeline.append(seg)
 
@@ -297,12 +474,13 @@ def render_video(scenes: List[Scene], audio_path: Path, out_path: Path, fps: int
         video.write_videofile(
             str(out_path),
             fps=fps,
-            codec="libx264",
-            audio_codec="aac",
-            threads=os.cpu_count() or 4,
+            **write_kwargs,
         )
 
-        video.close()
+        try:
+            video.close()
+        except Exception:
+            pass
 
     finally:
         try:
@@ -320,26 +498,39 @@ def main():
     ap = argparse.ArgumentParser(
         description="Auto-montagem de vídeo com roteiro + áudio + clipes em pastas por tag (ou pasta única)."
     )
-    ap.add_argument("--audio", required=True, help="Caminho do áudio narrado (wav/mp3).")
-    ap.add_argument("--text", required=True, help="Caminho do roteiro .txt.")
-    ap.add_argument("--clips", required=True, help="Pasta raiz com subpastas de clipes por tag.")
-    ap.add_argument("--tags", default="tags.yaml", help="Arquivo tags.yaml.")
-    ap.add_argument("--out", default="out/episode.mp4", help="Saída do vídeo final.")
-    ap.add_argument("--fallback", default="abstract_dark", help="Tag/pasta fallback se nada casar.")
-    ap.add_argument("--min_scene", type=float, default=4.5, help="Duração mínima por cena (s).")
-    ap.add_argument("--max_scene", type=float, default=10.0, help="Duração máxima por cena (s).")
-    ap.add_argument("--fps", type=int, default=30, help="FPS do vídeo final.")
-    ap.add_argument("--seed", type=int, default=42, help="Seed para aleatoriedade reprodutível.")
-    ap.add_argument("--print_plan", action="store_true", help="Imprime o plano e não renderiza.")
-    ap.add_argument("--debug_paths", action="store_true", help="Imprime diagnóstico de paths.")
+    ap.add_argument("--audio", required=True)
+    ap.add_argument("--text", required=True)
+    ap.add_argument("--clips", required=True)
+    ap.add_argument("--tags", default="tags.yaml")
+    ap.add_argument("--out", default="out/episode.mp4")
+    ap.add_argument("--fallback", default="abstract_dark")
+    ap.add_argument("--min_scene", type=float, default=4.5)
+    ap.add_argument("--max_scene", type=float, default=10.0)
+    ap.add_argument("--fps", type=int, default=30)
+    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--print_plan", action="store_true")
+    ap.add_argument("--debug_paths", action="store_true")
 
     ap.add_argument("--single_folder", action="store_true")
     ap.add_argument("--single_folder_value", default=None)
 
+    # ✅ Render acceleration options
+    ap.add_argument(
+        "--vcodec",
+        default="auto",
+        help="auto|libx264|h264_nvenc|hevc_nvenc|h264_videotoolbox|hevc_videotoolbox",
+    )
+    ap.add_argument("--preset", default="veryfast", help="Preset do libx264 (ultrafast..veryslow).")
+    ap.add_argument("--nvenc_preset", default="p4", help="Preset NVENC (p1..p7). Recomendo p4.")
+    ap.add_argument("--crf", type=int, default=20, help="CRF para libx264 (18=melhor, 23=menor).")
+    ap.add_argument("--bitrate", default=None, help="Bitrate de vídeo (ex: 6M). Se vazio, automático.")
+    ap.add_argument("--audio_bitrate", default="192k", help="Bitrate de áudio AAC (ex: 128k, 192k).")
+    ap.add_argument("--debug_ffmpeg", action="store_true", help="Mostra se ffmpeg suporta NVENC/VideoToolbox etc.")
+
     args = ap.parse_args()
 
     audio_p = resolve_path(args.audio, must_exist=True, is_dir=False)
-    text_p = resolve_path(args.text, must_exist=False, is_dir=False)  # valida no read_paragraphs (com debug)
+    text_p = resolve_path(args.text, must_exist=True, is_dir=False)
     clips_p = resolve_path(args.clips, must_exist=True, is_dir=True)
     tags_p = resolve_path(args.tags, must_exist=True, is_dir=False)
     out_p = resolve_path(args.out, must_exist=False, is_dir=False)
@@ -354,9 +545,9 @@ def main():
     tag_order, tags = load_tags_yaml(tags_p)
     paras = read_paragraphs(text_p, debug_paths=args.debug_paths)
 
-    audio = AudioFileClip(str(audio_p))
-    audio_dur = audio.duration
-    audio.close()
+    a = AudioFileClip(str(audio_p))
+    audio_dur = a.duration
+    a.close()
 
     scenes = build_scenes(
         paras=paras,
@@ -380,7 +571,20 @@ def main():
         print(f"Total cenas: {len(scenes)} | Duração áudio: {audio_dur:.2f}s | Duração vídeo: {total:.2f}s")
         return
 
-    render_video(scenes, audio_p, out_p, fps=args.fps)
+    render_video(
+        scenes=scenes,
+        audio_path=audio_p,
+        out_path=out_p,
+        fps=args.fps,
+        vcodec=args.vcodec,
+        preset=args.preset,
+        nvenc_preset=args.nvenc_preset,
+        crf=args.crf,
+        bitrate=args.bitrate,
+        audio_bitrate=args.audio_bitrate,
+        debug_ffmpeg=args.debug_ffmpeg,
+    )
+
     print(f"OK: {out_p}")
 
 
@@ -389,4 +593,10 @@ if __name__ == "__main__":
 
 
 
-#py -3.10 make_episode.py --audio "audio\ep001.mp3" --text "narrativa\ep001.txt" --clips "clips" --single_folder --single_folder_value abstract_dark --debug_paths
+#py -3.10 make_episode.py --audio "audio\ep001.mp3" --text "narrativa\ep001.txt" --clips "clips" --single_folder --single_folder_value abstract_dark --vcodec auto --debug_ffmpeg
+
+
+#py -3.10 make_episode.py --audio "audio\ep001.mp3" --text "narrativa\ep001.txt" --clips "clips" --single_folder --single_folder_value abstract_dark --vcodec h264_videotoolbox --debug_ffmpeg
+
+
+#py -3.10 make_episode.py --audio "audio\ep001.mp3" --text "narrativa\ep001.txt" --clips "clips" --single_folder --single_folder_value abstract_dark --vcodec h264_nvenc --nvenc_preset fast --debug_ffmpeg
