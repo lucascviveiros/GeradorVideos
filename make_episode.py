@@ -20,6 +20,27 @@ except Exception:
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".m4v", ".webm"}
 
 
+# Fallback em duas camadas (segunda camada fixa)
+SECONDARY_FALLBACK_TAG = "architecture"
+
+# “Tag similar” (tentativas antes do fallback)
+SIMILAR_TAGS: Dict[str, List[str]] = {
+    "debt_pressure": ["worry", "abstract_dark", "city"],
+    "office_night": ["working", "city", "abstract_dark"],
+    "working": ["office_night", "city", "abstract_dark"],
+    "multitask": ["working", "office_night", "city", "abstract_dark"],
+    "waiting_in_line": ["repetition_loop", "abstract_dark", "city"],
+    "repetition_loop": ["waiting_in_line", "abstract_dark", "city"],
+    "corridor_limit": ["architecture", "abstract_dark"],
+    "worry": ["alone", "abstract_dark", "city"],
+    "alone": ["worry", "abstract_dark"],
+    "studying": ["working", "abstract_dark", "alone"],
+    "city": ["working", "abstract_dark"],
+    "architecture": ["abstract_dark"],
+    "abstract_dark": ["architecture"],
+}
+
+
 # --------------------------
 # Utils
 # --------------------------
@@ -111,9 +132,6 @@ def pick_default_vcodec_auto(encoders_dump: Optional[str] = None) -> str:
         # if ffmpeg_has_encoder("hevc_videotoolbox", encoders_dump): return "hevc_videotoolbox"
 
     return "libx264"
-
-
-from typing import Dict, List, Optional
 
 
 def build_write_kwargs(
@@ -328,6 +346,47 @@ class Scene:
     clip_path: Path
 
 
+def _dedup_keep_order(items: List[str]) -> List[str]:
+    seen = set()
+    out = []
+    for x in items:
+        if x and x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+
+def resolve_clips_for_tag(
+    desired_tag: str,
+    clips_index: Dict[str, List[Path]],
+    primary_fallback: str,
+    secondary_fallback: str = SECONDARY_FALLBACK_TAG,
+) -> Tuple[str, List[Path]]:
+    """
+    Resolve clips com:
+      1) tag desejada
+      2) tags similares
+      3) fallback secundário (architecture)
+      4) fallback primário (--fallback, default abstract_dark)
+    Retorna (tag_resolvida, lista_de_clips).
+    """
+
+    candidates = [desired_tag]
+    candidates += SIMILAR_TAGS.get(desired_tag, [])
+    candidates += [secondary_fallback, primary_fallback]
+
+    for t in _dedup_keep_order(candidates):
+        clips = clips_index.get(t)
+        if clips:  # existe e tem arquivos
+            return t, clips
+
+    # Último recurso: se o índice está vazio, build_scenes já teria estourado antes.
+    raise RuntimeError(
+        f"Sem clipes: '{desired_tag}' e alternativas/fallbacks não encontrados. "
+        f"Disponíveis: {sorted(clips_index.keys())}"
+    )
+
+
 def build_scenes(
     paras: List[str],
     audio_dur: float,
@@ -369,7 +428,10 @@ def build_scenes(
         if not folder_path.is_dir():
             raise RuntimeError(f"--single_folder ativado, mas pasta não existe: {folder_path}")
 
-        single_clips = [f for f in folder_path.iterdir() if f.is_file() and f.suffix.lower() in VIDEO_EXTS]
+        single_clips = [
+            f for f in folder_path.iterdir()
+            if f.is_file() and f.suffix.lower() in VIDEO_EXTS
+        ]
         single_clips.sort(key=lambda x: x.name.lower())
         if not single_clips:
             raise RuntimeError(f"--single_folder ativado, mas não achei vídeos em: {folder_path}")
@@ -394,26 +456,30 @@ def build_scenes(
     last_used_per_tag: Dict[str, Optional[Path]] = {}
 
     for ptxt, dur in zip(paras, final_durs):
-        tag = choose_tag(ptxt, tag_order, tags, fallback=fallback_tag)
-        clips = clips_index.get(tag) or clips_index.get(fallback_tag)
-        if not clips:
-            raise RuntimeError(
-                f"Não achei clipes para tag '{tag}' nem para fallback '{fallback_tag}'. "
-                f"Tags disponíveis: {sorted(clips_index.keys())}"
-            )
-        if tag not in clips_index:
-            tag = fallback_tag
+        desired_tag = choose_tag(ptxt, tag_order, tags, fallback=fallback_tag)
 
-        clip_path = pick_clip(clips, rng, last_used_per_tag.get(tag))
-        last_used_per_tag[tag] = clip_path
+        # Fallback em 2 camadas + tags similares:
+        # desired_tag -> similares -> architecture -> fallback_tag
+        resolved_tag, clips = resolve_clips_for_tag(
+            desired_tag=desired_tag,
+            clips_index=clips_index,
+            primary_fallback=fallback_tag,             # ex: abstract_dark (via --fallback)
+            secondary_fallback=SECONDARY_FALLBACK_TAG, # ex: architecture
+        )
 
-        scenes.append(Scene(tag=tag, text=ptxt, duration=float(dur), clip_path=clip_path))
+        clip_path = pick_clip(clips, rng, last_used_per_tag.get(resolved_tag))
+        last_used_per_tag[resolved_tag] = clip_path
+
+        scenes.append(
+            Scene(tag=resolved_tag, text=ptxt, duration=float(dur), clip_path=clip_path)
+        )
 
     drift = audio_dur - sum(s.duration for s in scenes)
     if scenes and abs(drift) > 0.02:
         scenes[-1].duration = max(0.3, scenes[-1].duration + drift)
 
     return scenes
+
 
 
 def render_video(
@@ -462,14 +528,50 @@ def render_video(
     audio = AudioFileClip(str(audio_path))
     timeline: List[VideoFileClip] = []
 
+    TARGET_SIZE = (1920, 1080)
+
+
     try:
+        # DEPOIS (primeiro remove borda preta embutida, depois normaliza)
         for sc in scenes:
             base = VideoFileClip(str(sc.clip_path), audio=False)
-            #base = VideoFileClip(str(sc.clip_path))
+
+            # --- remove borda preta embutida (letterbox/pillarbox) ---
+            cd = ffmpeg_cropdetect(sc.clip_path, seconds=1.0)
+            if cd:
+                w, h, x, y = cd
+                base = base.crop(x1=x, y1=y, x2=x + w, y2=y + h)
+
+            # --- NORMALIZAÇÃO 1920x1080 (cover + crop central) ---
+            base = base.resize(height=TARGET_SIZE[1])
+            if base.w < TARGET_SIZE[0]:
+                base = base.resize(width=TARGET_SIZE[0])
+
+            x1 = int((base.w - TARGET_SIZE[0]) / 2)
+            y1 = int((base.h - TARGET_SIZE[1]) / 2)
+            base = base.crop(
+                x1=x1, y1=y1,
+                x2=x1 + TARGET_SIZE[0],
+                y2=y1 + TARGET_SIZE[1],
+            )
+            # --- fim normalização ---
+
             seg = loop_or_trim(base, sc.duration)
             timeline.append(seg)
 
-        video = concatenate_videoclips(timeline, method="compose").set_audio(audio)
+
+
+        video = concatenate_videoclips(timeline, method="chain").set_audio(audio)
+
+
+        ff_params = list(write_kwargs.get("ffmpeg_params", []))
+
+        ff_params += [
+            "-vf",
+            "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,setsar=1"
+        ]
+
+        write_kwargs["ffmpeg_params"] = ff_params
 
         video.write_videofile(
             str(out_path),
@@ -499,6 +601,11 @@ def main():
         description="Auto-montagem de vídeo com roteiro + áudio + clipes em pastas por tag (ou pasta única)."
     )
     ap.add_argument("--audio", required=True)
+
+    ap.add_argument("--langs", default="pt,en,es", help="Idiomas para gerar (ex: pt,en,es ou pt).")
+    ap.add_argument("--audio_pattern", default=None, help="Template opcional, ex: audio/ep001_{lang}.mp3")
+    ap.add_argument("--out_pattern", default=None, help="Template opcional, ex: out/ep001_{lang}.mp4")
+
     ap.add_argument("--text", required=True)
     ap.add_argument("--clips", required=True)
     ap.add_argument("--tags", default="tags.yaml")
@@ -521,7 +628,13 @@ def main():
         help="auto|libx264|h264_nvenc|hevc_nvenc|h264_videotoolbox|hevc_videotoolbox",
     )
     ap.add_argument("--preset", default="veryfast", help="Preset do libx264 (ultrafast..veryslow).")
-    ap.add_argument("--nvenc_preset", default="p4", help="Preset NVENC (p1..p7). Recomendo p4.")
+    #ap.add_argument("--nvenc_preset", default="p4", help="Preset NVENC (p1..p7). Recomendo p4.")
+    ap.add_argument(
+    "--nvenc_preset",
+    default="hq",
+    help="Preset NVENC: default|slow|medium|fast|hp|hq|bd|ll|llhq|llhp|lossless|losslesshp (recomendo hq ou fast).",
+    )
+
     ap.add_argument("--crf", type=int, default=20, help="CRF para libx264 (18=melhor, 23=menor).")
     ap.add_argument("--bitrate", default=None, help="Bitrate de vídeo (ex: 6M). Se vazio, automático.")
     ap.add_argument("--audio_bitrate", default="192k", help="Bitrate de áudio AAC (ex: 128k, 192k).")
@@ -545,47 +658,128 @@ def main():
     tag_order, tags = load_tags_yaml(tags_p)
     paras = read_paragraphs(text_p, debug_paths=args.debug_paths)
 
-    a = AudioFileClip(str(audio_p))
-    audio_dur = a.duration
-    a.close()
+    langs = [x.strip() for x in args.langs.split(",") if x.strip()]
+    if not langs:
+        raise RuntimeError("--langs inválido. Ex: pt,en,es")
 
-    scenes = build_scenes(
-        paras=paras,
-        audio_dur=audio_dur,
-        tag_order=tag_order,
-        tags=tags,
-        clips_root=clips_p,
-        fallback_tag=args.fallback,
-        min_scene=args.min_scene,
-        max_scene=args.max_scene,
-        seed=args.seed,
-        single_folder=args.single_folder,
-        single_folder_value=args.single_folder_value,
-    )
+    def resolve_audio_for_lang(lang: str) -> Path:
+        if args.audio_pattern:
+            return resolve_path(
+                args.audio_pattern.format(lang=lang),
+                must_exist=True,
+                is_dir=False,
+            )
 
-    if args.print_plan:
-        total = 0.0
-        for i, sc in enumerate(scenes, 1):
-            total += sc.duration
-            print(f"{i:02d} | {sc.duration:5.2f}s | {sc.tag:<16} | {sc.clip_path.name}")
-        print(f"Total cenas: {len(scenes)} | Duração áudio: {audio_dur:.2f}s | Duração vídeo: {total:.2f}s")
-        return
+        p = audio_p
+        name = p.stem
+        suf = p.suffix or ".mp3"
 
-    render_video(
-        scenes=scenes,
-        audio_path=audio_p,
-        out_path=out_p,
-        fps=args.fps,
-        vcodec=args.vcodec,
-        preset=args.preset,
-        nvenc_preset=args.nvenc_preset,
-        crf=args.crf,
-        bitrate=args.bitrate,
-        audio_bitrate=args.audio_bitrate,
-        debug_ffmpeg=args.debug_ffmpeg,
-    )
+        for known in ("_pt", "_en", "_es"):
+            if name.endswith(known):
+                return resolve_path(
+                    str(p.with_name(name.replace(known, f"_{lang}") + suf)),
+                    must_exist=True,
+                    is_dir=False,
+                )
 
-    print(f"OK: {out_p}")
+        return resolve_path(
+            str(p.with_name(f"{name}_{lang}{suf}")),
+            must_exist=True,
+            is_dir=False,
+        )
+
+    def resolve_out_for_lang(lang: str) -> Path:
+        if args.out_pattern:
+            return resolve_path(
+                args.out_pattern.format(lang=lang),
+                must_exist=False,
+                is_dir=False,
+            )
+
+        p = Path(args.out)
+        return resolve_path(
+            str(p.with_name(f"{p.stem}_{lang}{p.suffix}")),
+            must_exist=False,
+            is_dir=False,
+        )
+
+    for lang in langs:
+        audio_p = resolve_audio_for_lang(lang)
+        out_p = resolve_out_for_lang(lang)
+
+        a = AudioFileClip(str(audio_p))
+        audio_dur = a.duration
+        a.close()
+
+        scenes = build_scenes(
+            paras=paras,
+            audio_dur=audio_dur,
+            tag_order=tag_order,
+            tags=tags,
+            clips_root=clips_p,
+            fallback_tag=args.fallback,
+            min_scene=args.min_scene,
+            max_scene=args.max_scene,
+            seed=args.seed,
+            single_folder=args.single_folder,
+            single_folder_value=args.single_folder_value,
+        )
+
+        if args.print_plan:
+            print(f"\n--- PLAN ({lang}) ---")
+            for i, sc in enumerate(scenes, 1):
+                print(f"{i:02d} | {sc.duration:.2f}s | {sc.tag} | {sc.clip_path.name}")
+            continue
+
+        # DEPOIS (adicione em qualquer lugar acima de render_video, por ex. perto das funções ffmpeg_*)
+        def ffmpeg_cropdetect(path: Path, seconds: float = 1.0) -> Optional[Tuple[int, int, int, int]]:
+            """
+            Detecta bordas pretas embutidas usando ffmpeg cropdetect.
+            Retorna (w, h, x, y) ou None se não detectar.
+            """
+            try:
+                cmd = [
+                    "ffmpeg",
+                    "-hide_banner",
+                    "-ss", "0",
+                    "-t", str(seconds),
+                    "-i", str(path),
+                    "-vf", "cropdetect=24:16:0",
+                    "-f", "null",
+                    "-"
+                ]
+                r = subprocess.run(cmd, capture_output=True, text=True)
+                out = (r.stderr or "") + "\n" + (r.stdout or "")
+
+                # pega a ÚLTIMA ocorrência (normalmente a mais estável)
+                matches = re.findall(r"crop=(\d+):(\d+):(\d+):(\d+)", out)
+                if not matches:
+                    return None
+
+                w, h, x, y = map(int, matches[-1])
+                if w <= 0 or h <= 0:
+                    return None
+
+                return (w, h, x, y)
+            except Exception:
+                return None
+
+
+        render_video(
+            scenes=scenes,
+            audio_path=audio_p,
+            out_path=out_p,
+            fps=args.fps,
+            vcodec=args.vcodec,
+            preset=args.preset,
+            nvenc_preset=args.nvenc_preset,
+            crf=args.crf,
+            bitrate=args.bitrate,
+            audio_bitrate=args.audio_bitrate,
+            debug_ffmpeg=args.debug_ffmpeg,
+        )
+
+        print(f"OK ({lang}): {out_p}")
 
 
 if __name__ == "__main__":
@@ -595,8 +789,17 @@ if __name__ == "__main__":
 
 #py -3.10 make_episode.py --audio "audio\ep001.mp3" --text "narrativa\ep001.txt" --clips "clips" --single_folder --single_folder_value abstract_dark --vcodec auto --debug_ffmpeg
 
-
 #py -3.10 make_episode.py --audio "audio\ep001.mp3" --text "narrativa\ep001.txt" --clips "clips" --single_folder --single_folder_value abstract_dark --vcodec h264_videotoolbox --debug_ffmpeg
 
-
 #py -3.10 make_episode.py --audio "audio\ep001.mp3" --text "narrativa\ep001.txt" --clips "clips" --single_folder --single_folder_value abstract_dark --vcodec h264_nvenc --nvenc_preset fast --debug_ffmpeg
+
+
+
+#Libx264
+#py -3.10 make_episode.py --audio "audio\ep001.mp3" --text "narrativa\ep001.txt" --clips "clips" --vcodec auto --debug_ffmpeg
+
+#GPU NVENC
+#py -3.10 make_episode.py --audio "audio\ep001.mp3" --text "narrativa\ep001.txt" --clips "clips" --vcodec h264_nvenc --nvenc_preset fast --debug_ffmpeg
+
+
+#py -3.10 make_episode.py --audio audio\ep001_pt.mp3 --audio_pattern "audio\ep001_{lang}.mp3" --out_pattern "out\ep001_{lang}.mp4" --langs pt,en,es --text narrativa\ep001.txt --clips clips --vcodec h264_nvenc --nvenc_preset fast --debug_ffmpeg
