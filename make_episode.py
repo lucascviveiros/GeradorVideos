@@ -11,11 +11,12 @@ from typing import Dict, List, Optional, Tuple
 
 import yaml
 
-# Import robusto (MoviePy 1.x vs 2.x + diferentes layouts)
+
 try:
-    from moviepy.editor import AudioFileClip, VideoFileClip, concatenate_videoclips
-except Exception:
     from moviepy import AudioFileClip, VideoFileClip, concatenate_videoclips
+except Exception:
+    from moviepy.editor import AudioFileClip, VideoFileClip, concatenate_videoclips
+
 
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".m4v", ".webm"}
 
@@ -226,6 +227,39 @@ def build_write_kwargs(
         kwargs["ffmpeg_params"] = ffmpeg_params
 
     return kwargs
+
+
+def ffmpeg_cropdetect(path: Path, seconds: float = 1.0) -> Optional[Tuple[int, int, int, int]]:
+    """
+    Detecta bordas pretas embutidas usando ffmpeg cropdetect.
+    Retorna (w, h, x, y) ou None se não detectar.
+    """
+    try:
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-ss", "0",
+            "-t", str(seconds),
+            "-i", str(path),
+            "-vf", "cropdetect=24:16:0",
+            "-f", "null",
+            "-"
+        ]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        out = (r.stderr or "") + "\n" + (r.stdout or "")
+
+        # pega a ÚLTIMA ocorrência (normalmente a mais estável)
+        matches = re.findall(r"crop=(\d+):(\d+):(\d+):(\d+)", out)
+        if not matches:
+            return None
+
+        w, h, x, y = map(int, matches[-1])
+        if w <= 0 or h <= 0:
+            return None
+
+        return (w, h, x, y)
+    except Exception:
+        return None
 
 
 # --------------------------
@@ -481,6 +515,171 @@ def build_scenes(
     return scenes
 
 
+def ffprobe_stream_info(path: Path) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+    """
+    Retorna (width, height, sample_aspect_ratio) do vídeo.
+    SAR pode vir como '1:1' ou 'N/A'.
+    """
+    try:
+        cmd = [
+            "ffprobe", "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height,sample_aspect_ratio",
+            "-of", "default=nk=1:nw=1",
+            str(path),
+        ]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        out = (r.stdout or "").strip().splitlines()
+        if len(out) < 3:
+            return (None, None, None)
+        w = int(out[0]) if out[0].isdigit() else None
+        h = int(out[1]) if out[1].isdigit() else None
+        sar = out[2].strip() if out[2].strip() else None
+        return (w, h, sar)
+    except Exception:
+        return (None, None, None)
+
+
+def make_cache_name(src: Path) -> str:
+    """
+    Nome estável para cache: usa caminho + mtime + tamanho.
+    (evita recalcular hash de arquivo inteiro, é bem rápido)
+    """
+    st = src.stat()
+    key = f"{src.resolve()}|{st.st_size}|{int(st.st_mtime)}"
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", src.stem)
+    # hash curto para evitar colisão
+    h = f"{abs(hash(key)) & 0xFFFFFFFF:08x}"
+    return f"{safe}__{h}.mp4"
+
+
+def pick_cache_vcodec(preferred: str) -> str:
+    """
+    Escolhe codec para normalizar cache.
+    Se o preferred for NVENC/VideoToolbox e existir, usa ele.
+    Caso contrário, usa libx264.
+    """
+    enc_dump = ffmpeg_encoders_text()
+    if preferred != "auto" and preferred != "libx264" and ffmpeg_has_encoder(preferred, enc_dump):
+        return preferred
+    # tenta NVENC se disponível (muito rápido)
+    if ffmpeg_has_encoder("h264_nvenc", enc_dump):
+        return "h264_nvenc"
+    # tenta videotoolbox em mac
+    if ffmpeg_has_encoder("h264_videotoolbox", enc_dump):
+        return "h264_videotoolbox"
+    return "libx264"
+
+
+def normalize_clip_to_cache(
+    src: Path,
+    cache_dir: Path,
+    force: bool,
+    cache_fps: int,
+    preferred_vcodec: str,
+) -> Path:
+    """
+    Garante versão normalizada (1920x1080 cover+crop + setsar=1 + CFR) em cache.
+    Retorna o Path do arquivo a ser usado.
+    """
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    out = cache_dir / make_cache_name(src)
+
+    # DEPOIS: se já é 1920x1080, não re-encode (mantém o “full” original)
+    if not force:
+        w, h, sar = ffprobe_stream_info(src)
+        if w == 1920 and h == 1080:
+            return src
+
+    if out.exists() and not force:
+        return out
+
+    # filtro "cover": escala até cobrir, cropa para 1920x1080, SAR=1
+    vf = "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,setsar=1"
+
+    vcodec = pick_cache_vcodec(preferred_vcodec)
+
+    # parâmetros por encoder (simples e rápido)
+    v_params: List[str] = []
+    if vcodec == "libx264":
+        v_params = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
+    elif vcodec == "h264_nvenc":
+        v_params = ["-c:v", "h264_nvenc", "-preset", "fast", "-rc", "vbr", "-cq", "19"]
+    elif vcodec == "h264_videotoolbox":
+        v_params = ["-c:v", "h264_videotoolbox"]
+    else:
+        # fallback seguro
+        v_params = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
+
+    # CFR: no Windows/ffmpeg geral, usar -r na saída + -vsync cfr
+    # (em ffmpeg novo existe -fps_mode cfr, mas aqui vamos no clássico)
+    cmd = [
+        "ffmpeg", "-y",
+        "-hide_banner",
+        "-i", str(src),
+        "-vf", vf,
+        "-r", str(cache_fps),
+        "-vsync", "cfr",
+        *v_params,
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-movflags", "+faststart",
+        str(out),
+    ]
+
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        # se falhar, mostra stderr resumido (não explode silenciosamente)
+        err = (r.stderr or "").strip()
+        raise RuntimeError(f"Falha normalizando clipe:\nSRC: {src}\nOUT: {out}\nFFMPEG:\n{err[-1500:]}")
+    return out
+
+
+# DEPOIS (novo helper: crop compatível sem depender de moviepy.editor / moviepy.video.fx)
+def crop_compat(clip: VideoFileClip, x1: int, y1: int, x2: int, y2: int) -> VideoFileClip:
+    """
+    Crop compatível entre versões do MoviePy:
+    - se existir clip.crop -> usa
+    - senão tenta clip.transform (algumas versões)
+    - senão tenta clip.fl (MoviePy clássico)
+    """
+    x1 = int(max(0, x1))
+    y1 = int(max(0, y1))
+    x2 = int(min(clip.w, x2))
+    y2 = int(min(clip.h, y2))
+
+    if x2 <= x1 or y2 <= y1:
+        raise RuntimeError(f"crop inválido: ({x1},{y1})-({x2},{y2}) para clip {clip.w}x{clip.h}")
+
+    # 1) Se existir .crop() nativo, use (mais simples)
+    if hasattr(clip, "crop"):
+        return clip.crop(x1=x1, y1=y1, x2=x2, y2=y2)
+
+    # Função de “slice”
+    def _slice(frame):
+        return frame[y1:y2, x1:x2]
+
+    # 2) Algumas versões têm .transform()
+    if hasattr(clip, "transform"):
+        try:
+            # Variante onde transform recebe (get_frame, t)
+            newclip = clip.transform(lambda gf, t: _slice(gf(t)), apply_to=["mask"])
+        except TypeError:
+            # Variante onde transform recebe (frame)->frame
+            newclip = clip.transform(lambda frame: _slice(frame))
+        newclip.size = (x2 - x1, y2 - y1)
+        return newclip
+
+    # 3) MoviePy clássico tem .fl()
+    if hasattr(clip, "fl"):
+        def _crop_frame(get_frame, t):
+            return _slice(get_frame(t))
+
+        newclip = clip.fl(_crop_frame, apply_to=["mask"])
+        newclip.size = (x2 - x1, y2 - y1)
+        return newclip
+
+    raise RuntimeError("Este MoviePy não suporta crop via crop/transform/fl.")
 
 def render_video(
     scenes: List[Scene],
@@ -494,6 +693,11 @@ def render_video(
     bitrate: Optional[str],
     audio_bitrate: str,
     debug_ffmpeg: bool,
+    # ADICIONAR:
+    cache_clips: bool = False,
+    cache_dir: Optional[Path] = None,
+    cache_force: bool = False,
+    cache_fps: int = 30,
 ):
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -530,47 +734,59 @@ def render_video(
 
     TARGET_SIZE = (1920, 1080)
 
-
     try:
         # DEPOIS (primeiro remove borda preta embutida, depois normaliza)
         for sc in scenes:
-            base = VideoFileClip(str(sc.clip_path), audio=False)
+            clip_path_use = sc.clip_path
 
-            # --- remove borda preta embutida (letterbox/pillarbox) ---
-            cd = ffmpeg_cropdetect(sc.clip_path, seconds=1.0)
-            if cd:
-                w, h, x, y = cd
-                base = base.crop(x1=x, y1=y, x2=x + w, y2=y + h)
+            # ADICIONAR (cache de clipes normalizados)
+            if cache_clips:
+                if cache_dir is None:
+                    raise RuntimeError("cache_clips ligado, mas cache_dir é None")
+                clip_path_use = normalize_clip_to_cache(
+                    src=sc.clip_path,
+                    cache_dir=cache_dir,
+                    force=cache_force,
+                    cache_fps=cache_fps,
+                    preferred_vcodec=vcodec,
+                )
 
-            # --- NORMALIZAÇÃO 1920x1080 (cover + crop central) ---
-            base = base.resize(height=TARGET_SIZE[1])
-            if base.w < TARGET_SIZE[0]:
-                base = base.resize(width=TARGET_SIZE[0])
+                base = VideoFileClip(str(clip_path_use), audio=False)
 
-            x1 = int((base.w - TARGET_SIZE[0]) / 2)
-            y1 = int((base.h - TARGET_SIZE[1]) / 2)
-            base = base.crop(
-                x1=x1, y1=y1,
-                x2=x1 + TARGET_SIZE[0],
-                y2=y1 + TARGET_SIZE[1],
-            )
-            # --- fim normalização ---
+                # DEPOIS: se cache_clips está ligado, o FFmpeg já garantiu 1920x1080 (downscale/crop/setsar)
+                # então NÃO faça cropdetect/resized/crop aqui (evita bordas e “quadros variando” no player).
+            else:
+                base = VideoFileClip(str(clip_path_use), audio=False)
+
+                # DEPOIS: se cache_clips está desligado, faz cropdetect + normalização aqui
+                # --- remove borda preta embutida (letterbox/pillarbox) ---
+                cd = ffmpeg_cropdetect(clip_path_use, seconds=1.0)
+                if cd:
+                    w, h, x, y = cd
+                    base = crop_compat(base, x1=x, y1=y, x2=x + w, y2=y + h)
+
+                # --- NORMALIZAÇÃO 1920x1080 (cover + crop central) ---
+                base = base.resized(height=TARGET_SIZE[1])
+                if base.w < TARGET_SIZE[0]:
+                    base = base.resized(width=TARGET_SIZE[0])
+
+                x1 = int((base.w - TARGET_SIZE[0]) / 2)
+                y1 = int((base.h - TARGET_SIZE[1]) / 2)
+                # DEPOIS
+                base = crop_compat(
+                    base,
+                    x1=x1, y1=y1,
+                    x2=x1 + TARGET_SIZE[0],
+                    y2=y1 + TARGET_SIZE[1],
+                )
+                # --- fim normalização ---
 
             seg = loop_or_trim(base, sc.duration)
             timeline.append(seg)
 
-
-
-        video = concatenate_videoclips(timeline, method="chain").set_audio(audio)
-
+        video = concatenate_videoclips(timeline, method="chain").with_audio(audio)
 
         ff_params = list(write_kwargs.get("ffmpeg_params", []))
-
-        ff_params += [
-            "-vf",
-            "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,setsar=1"
-        ]
-
         write_kwargs["ffmpeg_params"] = ff_params
 
         video.write_videofile(
@@ -596,6 +812,8 @@ def render_video(
                 pass
 
 
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Auto-montagem de vídeo com roteiro + áudio + clipes em pastas por tag (ou pasta única)."
@@ -613,6 +831,11 @@ def main():
     ap.add_argument("--fallback", default="abstract_dark")
     ap.add_argument("--min_scene", type=float, default=4.5)
     ap.add_argument("--max_scene", type=float, default=10.0)
+    ap.add_argument("--cache_clips", action="store_true", help="Normaliza clipes em cache (1920x1080 cover) e reutiliza.")
+    ap.add_argument("--cache_dir", default="clips_cache", help="Pasta do cache de clipes normalizados.")
+    ap.add_argument("--cache_force", action="store_true", help="Força re-normalização mesmo se já existir no cache.")
+    ap.add_argument("--cache_fps", type=int, default=30, help="FPS do cache (CFR). Recomendo 30.")
+
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--print_plan", action="store_true")
@@ -703,11 +926,14 @@ def main():
             is_dir=False,
         )
 
-    for lang in langs:
-        audio_p = resolve_audio_for_lang(lang)
-        out_p = resolve_out_for_lang(lang)
+    # ADICIONAR (resolve cache_dir uma vez)
+    cache_dir_p = resolve_path(args.cache_dir, must_exist=False, is_dir=True)
 
-        a = AudioFileClip(str(audio_p))
+    for lang in langs:
+        audio_lang = resolve_audio_for_lang(lang)
+        out_lang = resolve_out_for_lang(lang)
+
+        a = AudioFileClip(str(audio_lang))
         audio_dur = a.duration
         a.close()
 
@@ -731,44 +957,10 @@ def main():
                 print(f"{i:02d} | {sc.duration:.2f}s | {sc.tag} | {sc.clip_path.name}")
             continue
 
-        # DEPOIS (adicione em qualquer lugar acima de render_video, por ex. perto das funções ffmpeg_*)
-        def ffmpeg_cropdetect(path: Path, seconds: float = 1.0) -> Optional[Tuple[int, int, int, int]]:
-            """
-            Detecta bordas pretas embutidas usando ffmpeg cropdetect.
-            Retorna (w, h, x, y) ou None se não detectar.
-            """
-            try:
-                cmd = [
-                    "ffmpeg",
-                    "-hide_banner",
-                    "-ss", "0",
-                    "-t", str(seconds),
-                    "-i", str(path),
-                    "-vf", "cropdetect=24:16:0",
-                    "-f", "null",
-                    "-"
-                ]
-                r = subprocess.run(cmd, capture_output=True, text=True)
-                out = (r.stderr or "") + "\n" + (r.stdout or "")
-
-                # pega a ÚLTIMA ocorrência (normalmente a mais estável)
-                matches = re.findall(r"crop=(\d+):(\d+):(\d+):(\d+)", out)
-                if not matches:
-                    return None
-
-                w, h, x, y = map(int, matches[-1])
-                if w <= 0 or h <= 0:
-                    return None
-
-                return (w, h, x, y)
-            except Exception:
-                return None
-
-
         render_video(
             scenes=scenes,
-            audio_path=audio_p,
-            out_path=out_p,
+            audio_path=audio_lang,
+            out_path=out_lang,
             fps=args.fps,
             vcodec=args.vcodec,
             preset=args.preset,
@@ -777,9 +969,14 @@ def main():
             bitrate=args.bitrate,
             audio_bitrate=args.audio_bitrate,
             debug_ffmpeg=args.debug_ffmpeg,
+            # ADICIONAR:
+            cache_clips=args.cache_clips,
+            cache_dir=cache_dir_p,
+            cache_force=args.cache_force,
+            cache_fps=args.cache_fps,
         )
 
-        print(f"OK ({lang}): {out_p}")
+        print(f"OK ({lang}): {out_lang}")
 
 
 if __name__ == "__main__":
@@ -799,7 +996,7 @@ if __name__ == "__main__":
 #py -3.10 make_episode.py --audio "audio\ep001.mp3" --text "narrativa\ep001.txt" --clips "clips" --vcodec auto --debug_ffmpeg
 
 #GPU NVENC
-#py -3.10 make_episode.py --audio "audio\ep001.mp3" --text "narrativa\ep001.txt" --clips "clips" --vcodec h264_nvenc --nvenc_preset fast --debug_ffmpeg
+#py -3.10 make_episode.py --audio "audio\ep001_pt.mp3" --text "narrativa\ep001.txt" --clips "clips" --vcodec h264_nvenc --nvenc_preset fast --debug_ffmpeg
 
 
 #py -3.10 make_episode.py --audio audio\ep001_pt.mp3 --audio_pattern "audio\ep001_{lang}.mp3" --out_pattern "out\ep001_{lang}.mp4" --langs pt,en,es --text narrativa\ep001.txt --clips clips --vcodec h264_nvenc --nvenc_preset fast --debug_ffmpeg
