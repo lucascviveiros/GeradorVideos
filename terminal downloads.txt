@@ -1,0 +1,117 @@
+
+# 01) Psicologia da decisão (geral)
+#py -3.10 .\download_videos.py --out video_pack --queries "decision making,choice,crossroads,thinking silhouette,overthinking,doubt,hesitation,mind maze" --per-query 20 --per-page 15 --sleep 1.2
+#py -3.10 .\download_videos.py --out video_pack --queries "decision,choice,crossroads,tradeoff,dilemma,business decision,strategy meeting,negotiation" --per-query 20 --per-page 15 --sleep 1.2
+
+
+
+# 02) Ansiedade / pressão / madrugada (retencao alta)
+#py -3.10 .\download_videos.py --out video_pack --queries "stress at night,insomnia,anxiety,late night laptop,rain window night,lonely apartment,bills paperwork,worried man" --per-query 20 --per-page 20 --sleep 1.2
+
+# 03) Dinheiro invisivel (números / dados / mercado)
+#py -3.10 .\download_videos.py --out video_pack --queries "financial chart,candlestick chart,stock market,data stream numbers,analytics dashboard,calculator close up,spreadsheet,graph screen" --per-query 20 --per-page 15 --sleep 1.2
+
+# 04) Divida / boletos / aperto
+#py -3.10 .\download_videos.py --out video_pack --queries "debt,bills,overdue notice,credit card debt,receipt pile,collection call,empty wallet,payment app" --per-query 20 --per-page 20 --sleep 1.2
+
+# 05) Tentacao / consumo / impulso
+#py -3.10 .\download_videos.py --out video_pack --queries "online shopping,shopping mall,sale discount,impulse buying,delivery app,food delivery,unboxing,credit card swipe" --per-query 20 --per-page 15 --sleep 1.2
+
+# 06) Rotina / disciplina / virada (antidoto)
+#py -3.10 .\download_videos.py --out video_pack --queries "morning routine,journaling,planning calendar,habit tracker,gym discipline,running sunrise,focus work,minimal desk" --per-query 20 --per-page 15 --sleep 1.2
+
+# 07) Tempo / custo de oportunidade
+#py -3.10 .\download_videos.py --out video_pack --queries "hourglass,clock ticking,time passing,time lapse city,commute,waiting line,train leaving,deadline" --per-query 20 --per-page 15 --sleep 1.2
+
+# 08) Status / luxo (o que você já começou)
+#py -3.10 .\download_videos.py --out video_pack --queries "luxury,luxury lifestyle,luxury car,watch close up,expensive hotel,hotel lobby,champagne,city night lights" --per-query 20 --per-page 15 --sleep 1.2
+
+# 09) Trabalho / burnout / loop infinito
+#py -3.10 .\download_videos.py --out video_pack --queries "burnout,office stress,working overtime,coding at night,coffee exhausted,deadlines,corporate meeting,commute crowd" --per-query 20 --per-page 15 --sleep 1.2
+
+# 10) Minimal / abstract premium (universal pra qualquer episodio)
+#py -3.10 .\download_videos.py --out video_pack --queries "abstract dark background,particles,smoke slow motion,bokeh lights,neon blur,monochrome texture,light leaks,shadow silhouette" --per-query 20 --per-page 15 --sleep 1.2
+
+# 11) Risco / incerteza / volatilidade
+#py -3.10 .\download_videos.py --out video_pack --queries "risk,uncertainty,storm clouds,lightning,roller coaster,falling dominoes,market crash,red graph down" --per-query 20 --per-page 15 --sleep 1.2
+
+# 12) Calma / clareza (final de episodio / conclusao)
+#py -3.10 .\download_videos.py --out video_pack --queries "calm sunrise,sea horizon,slow breathing,meditation,quiet room,soft light window,walking alone,peaceful night" --per-query 20 --per-page 15 --sleep 1.2
+
+
+# Decisão Invisível — packs de B-roll (expansão estratégica)
+
+# 13) Comparação social / inveja silenciosa
+#py -3.10 .\download_videos.py --out video_pack --queries "social comparison,scrolling instagram envy,luxury vs reality,watching others success,jealous glance,phone scrolling night" --per-query 20 --per-page 15 --sleep 1.2
+
+# 14) Escolhas automáticas / piloto automático
+#py -3.10 .\download_videos.py --out video_pack --queries "autopilot routine,habit loop,same routine everyday,automatic behavior,subway commute routine,clock punch work" --per-query 20 --per-page 15 --sleep 1.2
+
+# 15) Microdecisões (as que parecem irrelevantes)
+#py -3.10 .\download_videos.py --out video_pack --queries "small choices,coffee choice,micro decisions,daily routine details,choosing clothes,phone notification decision" --per-query 20 --per-page 15 --sleep 1.2
+
+# 16) Procrastinação elegante
+#py -3.10 .\download_videos.py --out video_pack --queries "procrastination,scrolling phone instead working,cleaning desk avoiding work,watching videos instead studying,lazy productivity" --per-query 20 --per-page 15 --sleep 1.2
+
+# 17) Informação excessiva / overload mental
+#py -3.10 .\download_videos.py --out video_pack --queries "information overload,multiple screens,too many notifications,news overload,charts everywhere,confused analyst" --per-query 20 --per-page 15 --sleep 1.2
+
+# 18) Medo de perder (FOMO)
+#py -3.10 .\download_videos.py --out video_pack --queries "fear of missing out,fomo,phone alerts flashing,checking prices fast,limited offer countdown,crypto hype crowd" --per-query 20 --per-page 15 --sleep 1.2
+
+# 19) Escolhas sob cansaço (decision fatigue)
+#py -3.10 .\download_videos.py --out video_pack --queries "decision fatigue,tired businessman at night,head in hands desk,end of day exhaustion,late night choices" --per-query 20 --per-page 15 --sleep 1.2
+
+# 20) Expectativa vs realidade
+#py -3.10 .\download_videos.py --out video_pack --queries "expectation vs reality,disappointment face,empty luxury apartment,failed celebration,reality check moment" --per-query 20 --per-page 15 --sleep 1.2
+
+# 21) Conforto que aprisiona
+#py -3.10 .\download_videos.py --out video_pack --queries "comfort zone couch,netflix binge night,staying home routine,soft prison comfort,lazy sunday night" --per-query 20 --per-page 15 --sleep 1.2
+
+# 22) Pressão social invisível
+#py -3.10 .\download_videos.py --out video_pack --queries "social pressure,office conformity,nodding meeting agreement,fake smile corporate,group decision pressure" --per-query 20 --per-page 15 --sleep 1.2
+
+# 23) Silêncio antes da decisão
+#py -3.10 .\download_videos.py --out video_pack --queries "silent moment before decision,man alone thinking,empty room contemplation,window rain thinking,long pause moment" --per-query 20 --per-page 15 --sleep 1.2
+
+# 24) Escolha consciente / ruptura do padrão
+#py -3.10 .\download_videos.py --out video_pack --queries "breaking routine,new path choice,walking opposite direction,turning point decision,calm confident walk" --per-query 20 --per-page 15 --sleep 1.2
+
+
+# Decisão Invisível — packs de B-roll (expansão avançada)
+
+# 25) Poder silencioso / bastidores
+#py -3.10 .\download_videos.py --out video_pack --queries "power behind the scenes,shadow authority,closed door meeting,boardroom empty night,city skyline office night,man observing city" --per-query 20 --per-page 15 --sleep 1.2
+
+# 26) Queda / fracasso invisível
+#py -3.10 .\download_videos.py --out video_pack --queries "failure moment,defeat alone,empty office after failure,head down walking street night,missed opportunity,loss reflection" --per-query 20 --per-page 15 --sleep 1.2
+
+# 27) Reconstrução lenta (ninguém vê)
+#py -3.10 .\download_videos.py --out video_pack --queries "starting over,quiet rebuilding,working alone early morning,small progress desk,planning again,slow focused work" --per-query 20 --per-page 15 --sleep 1.2
+
+# 28) Ambição silenciosa
+#py -3.10 .\download_videos.py --out video_pack --queries "ambition alone,night city ambition,working late by choice,focused stare window,vision planning wall,driven solitude" --per-query 20 --per-page 15 --sleep 1.2
+
+# 29) Ilusão de controle
+#py -3.10 .\download_videos.py --out video_pack --queries "illusion of control,overplanning desk,complex charts confusion,man frustrated planning,failed strategy,crumpled notes" --per-query 20 --per-page 15 --sleep 1.2
+
+# 30) Decisão errada (o custo depois)
+#py -3.10 .\download_videos.py --out video_pack --queries "wrong decision regret,looking back regretfully,missed train opportunity,late realization,empty room regret mood" --per-query 20 --per-page 15 --sleep 1.2
+
+# 31) Vida dupla (o que mostram vs realidade)
+#py -3.10 .\download_videos.py --out video_pack --queries "double life contrast,success facade loneliness,luxury outside empty inside,smiling public alone private,hidden struggle" --per-query 20 --per-page 15 --sleep 1.2
+
+# 32) Escolhas financeiras invisíveis (hábitos ricos/pobres)
+#py -3.10 .\download_videos.py --out video_pack --queries "financial habits,tracking expenses,investing quietly,budget planning desk,small daily money choices,long term thinking" --per-query 20 --per-page 15 --sleep 1.2
+
+# 33) Controle emocional sob pressão
+#py -3.10 .\download_videos.py --out video_pack --queries "emotional control,calm under pressure,slow breathing stress,composed face chaos around,inner calm strength" --per-query 20 --per-page 15 --sleep 1.2
+
+# 34) Solidão do topo
+#py -3.10 .\download_videos.py --out video_pack --queries "lonely success,alone at the top,penthouse night solitude,city view alone,luxury silence,isolation success" --per-query 20 --per-page 15 --sleep 1.2
+
+# 35) Escolhas morais (certo vs fácil)
+#py -3.10 .\download_videos.py --out video_pack --queries "moral dilemma,ethical decision,integrity choice,walking away temptation,serious reflection face,values moment" --per-query 20 --per-page 15 --sleep 1.2
+
+# 36) Silêncio pós-decisão (não há aplauso)
+#py -3.10 .\download_videos.py --out video_pack --queries "after decision silence,empty room calm,decision aftermath,quiet night reflection,alone with thoughts" --per-query 20 --per-page 15 --sleep 1.2  

@@ -12,6 +12,16 @@ from typing import Dict, List, Optional, Tuple
 import yaml
 
 
+# --- Pillow/MoviePy compatibility patch (Pillow 10+ removed Image.ANTIALIAS) ---
+try:
+    from PIL import Image
+    if not hasattr(Image, "ANTIALIAS"):
+        # Pillow >= 10: use LANCZOS as equivalent
+        Image.ANTIALIAS = Image.Resampling.LANCZOS
+except Exception:
+    pass
+
+
 try:
     from moviepy import AudioFileClip, VideoFileClip, concatenate_videoclips
 except Exception:
@@ -331,13 +341,46 @@ def index_clips(clips_root: Path) -> Dict[str, List[Path]]:
         raise RuntimeError(f"Pasta raiz de clipes não existe: {clips_root}")
 
     index: Dict[str, List[Path]] = {}
+
     for sub in clips_root.iterdir():
         if not sub.is_dir():
             continue
+
         files = [f for f in sub.iterdir() if f.is_file() and f.suffix.lower() in VIDEO_EXTS]
         files.sort(key=lambda x: x.name.lower())
-        if files:
-            index[sub.name] = files
+        if not files:
+            continue
+
+        folder = sub.name
+
+        # 1) chave original (ex: pixabay_abstract_dark_background)
+        _add_index(index, folder, files)
+
+        # 2) chave sem prefixo (ex: abstract_dark_background)
+        no_prefix = _strip_provider_prefix(folder)
+        if no_prefix != folder:
+            _add_index(index, no_prefix, files)
+
+            # 3) chave “base” (ex: abstract_dark) quando a pasta começa com a tag + "_" (prefix match)
+            #    Isso resolve o seu erro direto: abstract_dark -> abstract_dark_background
+            base = no_prefix.split("_")[0] + "_" + no_prefix.split("_")[1] if "_" in no_prefix else no_prefix
+            # acima mantém algo como abstract_dark (2 tokens) quando existir
+            # mas só faz sentido se o no_prefix tiver pelo menos 2 partes
+            if "_" in no_prefix:
+                first_two = "_".join(no_prefix.split("_")[:2])  # abstract_dark
+                _add_index(index, first_two, files)
+
+    # ordena e remove duplicatas por caminho (caso um mesmo arquivo caia em múltiplas keys)
+    for k in list(index.keys()):
+        uniq = []
+        seen = set()
+        for p in index[k]:
+            rp = str(p.resolve())
+            if rp not in seen:
+                seen.add(rp)
+                uniq.append(p)
+        uniq.sort(key=lambda x: x.name.lower())
+        index[k] = uniq
 
     if not index:
         raise RuntimeError(
@@ -345,6 +388,7 @@ def index_clips(clips_root: Path) -> Dict[str, List[Path]]:
             f"Esperado: {clips_root}/tag1/*.mp4, {clips_root}/tag2/*.mp4 ..."
         )
     return index
+
 
 
 def pick_clip(clips: List[Path], rng: random.Random, last_used: Optional[Path]) -> Path:
@@ -360,6 +404,8 @@ def pick_clip(clips: List[Path], rng: random.Random, last_used: Optional[Path]) 
     return rng.choice(clips)
 
 
+
+
 def loop_or_trim(clip: VideoFileClip, target_dur: float) -> VideoFileClip:
     if target_dur <= 0:
         return _subclip_compat(clip, 0, 0.01)
@@ -367,9 +413,22 @@ def loop_or_trim(clip: VideoFileClip, target_dur: float) -> VideoFileClip:
     if clip.duration >= target_dur:
         return _subclip_compat(clip, 0, target_dur)
 
-    reps = int(target_dur // clip.duration) + 1
-    looped = concatenate_videoclips([clip] * reps)
-    return _subclip_compat(looped, 0, target_dur)
+    # monta só o que precisa sem manter um looped grandão
+    remaining = target_dur
+    parts: List[VideoFileClip] = []
+    try:
+        while remaining > 0:
+            take = min(clip.duration, remaining)
+            parts.append(_subclip_compat(clip, 0, take))
+            remaining -= take
+
+        # Agora concatena as partes já no tamanho certo
+        return concatenate_videoclips(parts, method="chain")
+
+    finally:
+        # parts viraram timeline interna do retorno, NÃO feche aqui.
+        # (fechamento será feito depois no finally do render_video)
+        pass
 
 
 @dataclass
@@ -734,12 +793,12 @@ def render_video(
 
     TARGET_SIZE = (1920, 1080)
 
-    try:
-        # DEPOIS (primeiro remove borda preta embutida, depois normaliza)
-        for sc in scenes:
-            clip_path_use = sc.clip_path
+    for sc in scenes:
+        clip_path_use = sc.clip_path
+        base = None
 
-            # ADICIONAR (cache de clipes normalizados)
+        try:
+            # resolve path (cache ou direto)
             if cache_clips:
                 if cache_dir is None:
                     raise RuntimeError("cache_clips ligado, mas cache_dir é None")
@@ -753,64 +812,70 @@ def render_video(
 
                 base = VideoFileClip(str(clip_path_use), audio=False)
 
-                # DEPOIS: se cache_clips está ligado, o FFmpeg já garantiu 1920x1080 (downscale/crop/setsar)
-                # então NÃO faça cropdetect/resized/crop aqui (evita bordas e “quadros variando” no player).
+                # cache_clips ligado -> já está 1920x1080 + setsar=1, não mexe
             else:
                 base = VideoFileClip(str(clip_path_use), audio=False)
 
-                # DEPOIS: se cache_clips está desligado, faz cropdetect + normalização aqui
-                # --- remove borda preta embutida (letterbox/pillarbox) ---
+                # cropdetect
                 cd = ffmpeg_cropdetect(clip_path_use, seconds=1.0)
                 if cd:
                     w, h, x, y = cd
                     base = crop_compat(base, x1=x, y1=y, x2=x + w, y2=y + h)
 
-                # --- NORMALIZAÇÃO 1920x1080 (cover + crop central) ---
-                base = base.resized(height=TARGET_SIZE[1])
+                # normalização 1920x1080
+                base = _resize_compat(base, height=TARGET_SIZE[1])
                 if base.w < TARGET_SIZE[0]:
-                    base = base.resized(width=TARGET_SIZE[0])
+                    base = _resize_compat(base, width=TARGET_SIZE[0])
 
                 x1 = int((base.w - TARGET_SIZE[0]) / 2)
                 y1 = int((base.h - TARGET_SIZE[1]) / 2)
-                # DEPOIS
                 base = crop_compat(
                     base,
                     x1=x1, y1=y1,
                     x2=x1 + TARGET_SIZE[0],
                     y2=y1 + TARGET_SIZE[1],
                 )
-                # --- fim normalização ---
 
             seg = loop_or_trim(base, sc.duration)
             timeline.append(seg)
 
-        video = concatenate_videoclips(timeline, method="chain").with_audio(audio)
+        finally:
+            # ✅ fecha o reader do ffmpeg do clipe base
+            if base is not None:
+                try:
+                    base.close()
+                except Exception:
+                    pass
 
-        ff_params = list(write_kwargs.get("ffmpeg_params", []))
-        write_kwargs["ffmpeg_params"] = ff_params
 
-        video.write_videofile(
-            str(out_path),
-            fps=fps,
-            **write_kwargs,
-        )
 
-        try:
-            video.close()
-        except Exception:
-            pass
+PROVIDER_PREFIXES = ("pixabay_", "pexels_", "mix_", "stock_")
 
-    finally:
-        try:
-            audio.close()
-        except Exception:
-            pass
-        for c in timeline:
-            try:
-                c.close()
-            except Exception:
-                pass
+def _strip_provider_prefix(folder_name: str) -> str:
+    for p in PROVIDER_PREFIXES:
+        if folder_name.startswith(p):
+            return folder_name[len(p):]
+    return folder_name
 
+def _add_index(index: Dict[str, List[Path]], key: str, files: List[Path]):
+    if not key:
+        return
+    index.setdefault(key, []).extend(files)
+
+
+def _resize_compat(clip: VideoFileClip, *, width: Optional[int] = None, height: Optional[int] = None) -> VideoFileClip:
+    """
+    Compat MoviePy:
+      - MoviePy 1.x: clip.resize(...)
+      - Algumas variações: clip.resized(...) (não existe no seu caso)
+    """
+    if hasattr(clip, "resize"):
+        # MoviePy clássico
+        return clip.resize(width=width, height=height)
+    if hasattr(clip, "resized"):
+        # Caso exista em outra versão
+        return clip.resized(width=width, height=height)
+    raise RuntimeError("MoviePy: não encontrei resize/resized nesta versão.")
 
 
 
