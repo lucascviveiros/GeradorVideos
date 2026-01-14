@@ -6,7 +6,10 @@
 
 
 # 02) Ansiedade / pressão / madrugada (retencao alta)
-#py -3.10 .\download_videos.py --out video_pack --queries "stress at night,insomnia,anxiety,late night laptop,rain window night,lonely apartment,bills paperwork,worried man" --per-query 20 --per-page 20 --sleep 1.2
+#py -3.10 .\download_videos.py --out video_pack --queries "stress at night,insomnia,anxiety,late night laptop,rain window night,lonely apartment,bills paperwork,worried man" --per-query 20 --per-page 20 --sleep 1.2 --orientation landscape
+
+py -3.10 .\download_videos.py --out video_pack --queries "stress at night,insomnia,anxiety,late night laptop,rain window night,lonely apartment,bills paperwork,worried man" --per-query 20 --per-page 20 --sleep 1.2 --orientation landscape --pexels_size medium --min_width 1920 --min_height 1080 --max_width 3840 --max_height 2160
+
 
 # 03) Dinheiro invisivel (números / dados / mercado)
 #py -3.10 .\download_videos.py --out video_pack --queries "financial chart,candlestick chart,stock market,data stream numbers,analytics dashboard,calculator close up,spreadsheet,graph screen" --per-query 20 --per-page 15 --sleep 1.2
@@ -115,3 +118,29 @@
 
 # 36) Silêncio pós-decisão (não há aplauso)
 #py -3.10 .\download_videos.py --out video_pack --queries "after decision silence,empty room calm,decision aftermath,quiet night reflection,alone with thoughts" --per-query 20 --per-page 15 --sleep 1.2  
+
+
+
+E1) Tensão silenciosa (claustro, espera, “algo vai acontecer”)
+
+#py -3.10 .\download_videos.py --out video_pack_emotions --queries "empty corridor dim light,waiting room empty chairs,door crack light,slow hallway walk,shadow moving on wall,elevator doors closing,security camera angle,lonely bench night" --per-query 20 --per-page 15 --sleep 1.2
+
+E2) Ansiedade física (gestos, mãos, microações)
+
+#py -3.10 .\download_videos.py --out video_pack_emotions --queries "nervous hands close up,fidgeting fingers,tapping foot,shaking leg,biting nails,clenched fist,breathing chest close up,wrinkling paper stress" --per-query 20 --per-page 15 --sleep 1.2
+
+E3) Tristeza / luto sutil (sem melodrama)
+
+#py -3.10 .\download_videos.py --out video_pack_emotions --queries "rainy window close up,empty bus seat,street lights blur rain,solitary walk fog,abandoned playground dusk,empty room light through curtain,lonely street night,umbrella alone" --per-query 20 --per-page 15 --sleep 1.2
+
+E4) Raiva contida / frustração (energia travada)
+
+#py -3.10 .\download_videos.py --out video_pack_emotions --queries "crumpling paper,slam drawer close up,throwing keys table,broken glass slow motion,punching wall shadow,shattered phone screen,tearing receipt,aggressive scribbling notebook" --per-query 20 --per-page 15 --sleep 1.2
+
+E5) Alívio / clareza (virada emocional)
+
+#py -3.10 .\download_videos.py --out video_pack_emotions --queries "deep breath calm,curtain opening sunlight,window light warm,walking into sunrise,quiet ocean horizon,mist forest morning,soft light bedroom,slow exhale" --per-query 20 --per-page 15 --sleep 1.2
+
+E6) Determinação / coragem (movimento decidido, sem “motivacional genérico”)
+
+#py -3.10 .\download_videos.py --out video_pack_emotions --queries "tying shoelaces close up,hand tightening watch strap,climbing stairs silhouette,walking against crowd,training alone dawn,focused eyes shadow,grip chalk hands,steady forward walk" --per-query 20 --per-page 15 --sleep 1.2

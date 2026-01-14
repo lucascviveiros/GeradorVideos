@@ -35,21 +35,100 @@ VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".m4v", ".webm"}
 SECONDARY_FALLBACK_TAG = "architecture"
 
 # “Tag similar” (tentativas antes do fallback)
+from typing import Dict, List
+
 SIMILAR_TAGS: Dict[str, List[str]] = {
-    "debt_pressure": ["worry", "abstract_dark", "city"],
-    "office_night": ["working", "city", "abstract_dark"],
-    "working": ["office_night", "city", "abstract_dark"],
-    "multitask": ["working", "office_night", "city", "abstract_dark"],
-    "waiting_in_line": ["repetition_loop", "abstract_dark", "city"],
-    "repetition_loop": ["waiting_in_line", "abstract_dark", "city"],
-    "corridor_limit": ["architecture", "abstract_dark"],
-    "worry": ["alone", "abstract_dark", "city"],
-    "alone": ["worry", "abstract_dark"],
-    "studying": ["working", "abstract_dark", "alone"],
-    "city": ["working", "abstract_dark"],
-    "architecture": ["abstract_dark"],
-    "abstract_dark": ["architecture"],
+    "abstract": ["abstract_dark", "reflection", "perspective", "matrix"],
+    "abstract_dark": ["abstract", "worry", "stress", "repetition_loop"],
+    "adventure": ["travel", "opportunity", "growth", "nature"],
+    "alone": ["isolation", "sad", "worry", "reflection"],
+    "appreciation": ["thanks", "kindness", "family", "peace"],
+    "architecture": ["construction", "city", "business", "abstract_dark"],
+    "bad_posture": ["working", "stress", "fatigue", "illness"],
+    "brain": ["decision", "reflection", "discussion", "perspective"],
+    "broken": ["stress", "sad", "risk", "death"],
+    "business": ["working", "office_night", "city", "tecnology"],
+    "calm": ["relax", "peace", "nature", "self_care"],
+    "christmas": ["family", "appreciation", "thanks", "happy"],
+    "city": ["urban_lifestyle", "working", "office_night", "subway"],
+    "clean": ["self_care", "calm", "morning", "peace"],
+    "cold": ["alone", "abstract_dark", "sad", "nature"],
+    "construction": ["architecture", "city", "hands_on", "business"],
+    "cooperation": ["business", "discussion", "kindness", "hands_on"],
+    "creation": ["growth", "hands_on", "music", "perspective"],
+    "data": ["tecnology", "business", "multitask", "working"],
+    "death": ["illness", "broken", "sad", "reflection"],
+    "debt_pressure": ["financial_pressure", "expenses", "worry", "credit_card"],
+    "decision": ["brain", "risk", "perspective", "contract_signing"],
+    "denial": ["decision", "worry", "stress", "abstract_dark"],
+    "dice": ["risk", "decision", "opportunity", "money_disappearing"],
+    "discussion": ["business", "decision", "brain", "cooperation"],
+    "doubt": ["decision", "worry", "reflection", "perspective"],
+    "energy": ["morning", "working", "training", "growth"],
+    "expenses": ["spent", "money_disappearing", "financial_pressure", "debt_pressure"],
+    "family": ["appreciation", "thanks", "christmas", "happy"],
+    "fatigue": ["stress", "working", "worry", "bad_posture"],
+
+    "fire": ["risk", "broken", "abstract_dark", "news"],
+    "food": ["morning", "self_care", "calm", "walk"],
+    "freedom": ["peace", "relax", "nature", "happy"],
+    "growth": ["opportunity", "training", "prosperity", "creation"],
+    "hands_on": ["creation", "construction", "training", "business"],
+    "happy": ["peace", "freedom", "appreciation", "prosperity"],
+    "illness": ["stress", "fatigue", "self_care", "death"],
+    "investments": ["prosperity", "risk", "financial_pressure", "decision"],
+    "isolation": ["alone", "sad", "reflection", "nature"],
+    "kindness": ["appreciation", "thanks", "self_care", "peace"],
+    "manifestation": ["prosperity", "growth", "spiritual", "matrix"],
+    "matrix": ["abstract", "abstract_dark", "tecnology", "data"],
+    "morning": ["calm", "preparation", "self_care", "walk"],
+    "movie": ["reflection", "perspective", "music", "abstract"],
+    "multitask": ["working", "office_night", "data", "stress"],
+    "music": ["calm", "reflection", "movie", "nature"],
+    "nature": ["peace", "calm", "walk", "freedom"],
+    "news": ["business", "city", "tecnology", "risk"],
+    "noise": ["city", "office_night", "stress", "repetition_loop"],
+    "office_night": ["working", "city", "multitask", "stress"],
+    "opportunity": ["growth", "business", "decision", "prosperity"],
+    "peace": ["calm", "relax", "nature", "freedom"],
+    "perspective": ["reflection", "decision", "brain", "peace"],
+    "phone": ["tecnology", "credit_card", "money_disappearing", "urban_lifestyle"],
+    "preparation": ["morning", "studying", "training", "decision"],
+    "prosperity": ["investments", "growth", "freedom", "happy"],
+    "reflection": ["brain", "perspective", "alone", "calm"],
+    "relax": ["self_care", "calm", "peace", "nature"],
+    "repetition_loop": ["waiting_in_line", "train", "subway", "noise"],
+    "risk": ["dice", "decision", "future_burden", "investments"],
+
+    "robber": ["risk", "city", "abstract_dark", "money_disappearing"],
+    "sad": ["alone", "isolation", "worry", "fatigue"],
+    "self_care": ["relax", "calm", "kindness", "walk"],
+    "spent": ["expenses", "money_disappearing", "credit_card", "financial_pressure"],
+    "spiritual": ["reflection", "peace", "manifestation", "nature"],
+    "stress": ["worry", "fatigue", "working", "office_night"],
+    "studying": ["preparation", "brain", "working", "reflection"],
+    "subway": ["train", "city", "waiting_in_line", "urban_lifestyle"],
+    "sync": ["repetition_loop", "multitask", "music", "data"],
+    "tecnology": ["data", "business", "phone", "news"],
+    "thanks": ["appreciation", "kindness", "family", "peace"],
+    "thirst": ["food", "self_care", "walk", "morning"],
+    "time": ["reflection", "working", "preparation", "repetition_loop"],
+    "train": ["subway", "waiting_in_line", "city", "repetition_loop"],
+    "training": ["growth", "energy", "hands_on", "discipline"] if False else ["growth", "energy", "hands_on", "preparation"],
+    "travel": ["adventure", "freedom", "nature", "opportunity"],
+    "waiting_in_line": ["repetition_loop", "subway", "train", "stress"],
+    "walk": ["nature", "self_care", "morning", "peace"],
+    "weight": ["training", "self_care", "stress", "food"],
+    "working": ["office_night", "business", "multitask", "stress"],
+    "worry": ["stress", "debt_pressure", "financial_pressure", "alone"],
+    "credit_card": ["expenses", "money_disappearing", "contract_signing", "debt_pressure"],
+    "future_burden": ["debt_pressure", "risk", "financial_pressure", "reflection"],
+    "contract_signing": ["credit_card", "decision", "future_burden", "risk"],
+    "money_disappearing": ["spent", "expenses", "credit_card", "financial_pressure"],
+    "urban_lifestyle": ["city", "working", "subway", "money_disappearing"],
+    "financial_pressure": ["debt_pressure", "worry", "expenses", "money_disappearing"],
 }
+
 
 
 # --------------------------
@@ -299,9 +378,10 @@ def read_paragraphs(text_path: Path, debug_paths: bool = False) -> List[str]:
         raise RuntimeError(f"Roteiro não encontrado: {text_path}")
 
     raw = text_path.read_text(encoding="utf-8").strip()
-    parts = re.split(r"\n\s*\n+", raw)
 
-    paras: List[str] = []
+    # 1) Modo normal: parágrafos separados por linha em branco
+    parts = re.split(r"\n\s*\n+", raw)
+    paras = []
     for part in parts:
         part = part.strip()
         if part:
@@ -309,7 +389,62 @@ def read_paragraphs(text_path: Path, debug_paths: bool = False) -> List[str]:
 
     if not paras:
         raise RuntimeError("Nenhum parágrafo encontrado no roteiro.")
+
+    # 2) Se veio "blocão" (1 parágrafo), auto-split por frases e reagrupa
+    if len(paras) == 1:
+        blocao = paras[0]
+
+        # Split de frases (PT/EN/ES) sem quebrar decimais tipo 3.10
+        # Regra: quebra em .!? quando:
+        # - NÃO está após dígito
+        # - e depois vem espaço + letra (inclui acentos) ou aspas/parênteses + letra
+        sentence_split = re.split(
+            r'(?<!\d)(?<=[.!?])\s+(?=(?:["“”‘’(\[]\s*)?[A-Za-zÁÀÂÃÉÈÊÍÌÎÓÒÔÕÚÙÛÇÑ])',
+            blocao
+        )
+        sentences = [s.strip() for s in sentence_split if s.strip()]
+
+        # Se não conseguiu dividir (texto sem pontuação), mantém como 1
+        if len(sentences) <= 1:
+            return paras
+
+        # Agora reagrupa frases em "cenas" com tamanho bom (por palavras)
+        def wc(s: str) -> int:
+            return len(re.findall(r"\b[\wÀ-ÿ]+\b", s))
+
+        TARGET_MIN_WORDS = 18
+        TARGET_MAX_WORDS = 55
+
+        grouped: List[str] = []
+        cur: List[str] = []
+        cur_words = 0
+
+        for s in sentences:
+            w = wc(s)
+            # Se adicionar estoura muito o limite, fecha o bloco atual
+            if cur and (cur_words + w) > TARGET_MAX_WORDS:
+                grouped.append(" ".join(cur).strip())
+                cur = [s]
+                cur_words = w
+            else:
+                cur.append(s)
+                cur_words += w
+
+            # Se já bateu um mínimo, pode fechar para criar mais variedade
+            if cur_words >= TARGET_MIN_WORDS:
+                grouped.append(" ".join(cur).strip())
+                cur = []
+                cur_words = 0
+
+        if cur:
+            grouped.append(" ".join(cur).strip())
+
+        # Remove qualquer vazio e retorna
+        grouped = [re.sub(r"\s+", " ", g).strip() for g in grouped if g.strip()]
+        return grouped if grouped else paras
+
     return paras
+
 
 
 def word_count(s: str) -> int:
@@ -334,6 +469,22 @@ def choose_tag(paragraph: str, tag_order: List[str], tags: Dict[str, List[str]],
             best_score = s
             best_tag = tag
     return best_tag if best_score > 0 else fallback
+
+
+PROVIDER_PREFIXES = ("pixabay_", "pexels_", "mix_", "stock_")
+
+
+def _strip_provider_prefix(folder_name: str) -> str:
+    for p in PROVIDER_PREFIXES:
+        if folder_name.startswith(p):
+            return folder_name[len(p):]
+    return folder_name
+
+
+def _add_index(index: Dict[str, List[Path]], key: str, files: List[Path]):
+    if not key:
+        return
+    index.setdefault(key, []).extend(files)
 
 
 def index_clips(clips_root: Path) -> Dict[str, List[Path]]:
@@ -390,7 +541,6 @@ def index_clips(clips_root: Path) -> Dict[str, List[Path]]:
     return index
 
 
-
 def pick_clip(clips: List[Path], rng: random.Random, last_used: Optional[Path]) -> Path:
     if not clips:
         raise RuntimeError("Lista de clipes vazia.")
@@ -402,8 +552,6 @@ def pick_clip(clips: List[Path], rng: random.Random, last_used: Optional[Path]) 
             if c != last_used:
                 return c
     return rng.choice(clips)
-
-
 
 
 def loop_or_trim(clip: VideoFileClip, target_dur: float) -> VideoFileClip:
@@ -437,6 +585,18 @@ class Scene:
     text: str
     duration: float
     clip_path: Path
+    # Nota importante:
+    # - Scene.text hoje carrega o parágrafo correspondente ao bloco do arquivo --text.
+    # - Porém, no pipeline atual, esse texto NÃO é desenhado no vídeo.
+    # - Ele serve apenas para:
+    #   1) escolher a tag do clipe (choose_tag / keywords)
+    #   2) distribuir durações proporcionalmente (word_count -> final_durs)
+    #
+    # Se você quiser "legendas por idioma" sem timestamps:
+    # - o caminho mais direto é ter um arquivo de legendas por idioma com a MESMA quantidade
+    #   de parágrafos/cenas (1:1 com a estrutura),
+    # - e gerar SRT (timestamps derivados de Scene.duration) OU burn-in por cena.
+    # Isso exige um input extra (captions_pattern) e um gerador de SRT/overlay.
 
 
 def _dedup_keep_order(items: List[str]) -> List[str]:
@@ -495,6 +655,13 @@ def build_scenes(
 ) -> List[Scene]:
     rng = random.Random(seed)
 
+    # IMPORTANTE (estrutura de cortes):
+    # - Cada parágrafo em `paras` vira uma cena (Scene).
+    # - A duração de cada cena é calculada proporcionalmente ao número de palavras do parágrafo.
+    # - Ou seja: o arquivo --text funciona como "estrutura" (cortes) HOJE.
+    # - Isso NÃO é baseado em timestamps explícitos no arquivo.
+    # - Se você quiser cortes com tempos fixos (ex: 0-6.2s, 6.2-11.0s), precisaria
+    #   trocar esse mecanismo e parsear tempos no arquivo (mudança de regra do pipeline).
     counts = [max(1, word_count(p)) for p in paras]
     total_words = sum(counts)
 
@@ -740,6 +907,22 @@ def crop_compat(clip: VideoFileClip, x1: int, y1: int, x2: int, y2: int) -> Vide
 
     raise RuntimeError("Este MoviePy não suporta crop via crop/transform/fl.")
 
+
+def _resize_compat(clip: VideoFileClip, *, width: Optional[int] = None, height: Optional[int] = None) -> VideoFileClip:
+    """
+    Compat MoviePy:
+      - MoviePy 1.x: clip.resize(...)
+      - Algumas variações: clip.resized(...) (não existe no seu caso)
+    """
+    if hasattr(clip, "resize"):
+        # MoviePy clássico
+        return clip.resize(width=width, height=height)
+    if hasattr(clip, "resized"):
+        # Caso exista em outra versão
+        return clip.resized(width=width, height=height)
+    raise RuntimeError("MoviePy: não encontrei resize/resized nesta versão.")
+
+
 def render_video(
     scenes: List[Scene],
     audio_path: Path,
@@ -752,12 +935,32 @@ def render_video(
     bitrate: Optional[str],
     audio_bitrate: str,
     debug_ffmpeg: bool,
-    # ADICIONAR:
+    # cache
     cache_clips: bool = False,
     cache_dir: Optional[Path] = None,
     cache_force: bool = False,
     cache_fps: int = 30,
 ):
+    """
+    Renderiza o vídeo final:
+      - abre áudio
+      - monta timeline (clips normalizados/cropados, loop/trim por cena)
+      - concatena timeline + seta áudio
+      - write_videofile (gera arquivo)
+      - fecha recursos
+
+    IMPORTANTE (texto/legendas):
+    - Este renderizador NÃO desenha texto no vídeo.
+    - Ele não usa TextClip, CompositeVideoClip, nem ffmpeg drawtext.
+    - Ou seja: qualquer conteúdo em Scene.text não aparece no vídeo final.
+    - Hoje o vídeo final é apenas clipes + áudio.
+
+    Se você quiser legendas:
+    - Opção 1: gerar .SRT automaticamente (timestamps derivados de Scene.duration).
+    - Opção 2: "burn-in" (bakar) texto por cena no próprio vídeo.
+    - Ambas exigem entradas extras (arquivos de legenda por idioma) e/ou mudanças no render.
+    """
+    out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     enc_dump = ffmpeg_encoders_text()
@@ -777,7 +980,6 @@ def render_video(
         vcodec = "libx264"
 
     threads = os.cpu_count() or 4
-    # NVENC / VideoToolbox não se beneficia de threads do mesmo jeito — mas não atrapalha.
     write_kwargs = build_write_kwargs(
         vcodec=vcodec,
         preset=preset,
@@ -788,20 +990,26 @@ def render_video(
         threads=threads,
     )
 
-    audio = AudioFileClip(str(audio_path))
-    timeline: List[VideoFileClip] = []
-
     TARGET_SIZE = (1920, 1080)
 
-    for sc in scenes:
-        clip_path_use = sc.clip_path
-        base = None
+    audio = None
+    timeline: List[VideoFileClip] = []
+    final = None
+    bases_to_close: List[VideoFileClip] = []
 
-        try:
-            # resolve path (cache ou direto)
+    try:
+        # abre áudio uma vez
+        audio = AudioFileClip(str(audio_path))
+
+        # monta timeline
+        for sc in scenes:
+            clip_path_use = sc.clip_path
+            base: Optional[VideoFileClip] = None
+
             if cache_clips:
                 if cache_dir is None:
                     raise RuntimeError("cache_clips ligado, mas cache_dir é None")
+
                 clip_path_use = normalize_clip_to_cache(
                     src=sc.clip_path,
                     cache_dir=cache_dir,
@@ -809,20 +1017,19 @@ def render_video(
                     cache_fps=cache_fps,
                     preferred_vcodec=vcodec,
                 )
-
                 base = VideoFileClip(str(clip_path_use), audio=False)
+                # cache_clips ligado -> já está 1920x1080 + setsar=1
 
-                # cache_clips ligado -> já está 1920x1080 + setsar=1, não mexe
             else:
                 base = VideoFileClip(str(clip_path_use), audio=False)
 
-                # cropdetect
+                # cropdetect (remove bordas pretas embutidas)
                 cd = ffmpeg_cropdetect(clip_path_use, seconds=1.0)
                 if cd:
                     w, h, x, y = cd
                     base = crop_compat(base, x1=x, y1=y, x2=x + w, y2=y + h)
 
-                # normalização 1920x1080
+                # normalização 1920x1080 (cover + crop)
                 base = _resize_compat(base, height=TARGET_SIZE[1])
                 if base.w < TARGET_SIZE[0]:
                     base = _resize_compat(base, width=TARGET_SIZE[0])
@@ -831,52 +1038,68 @@ def render_video(
                 y1 = int((base.h - TARGET_SIZE[1]) / 2)
                 base = crop_compat(
                     base,
-                    x1=x1, y1=y1,
+                    x1=x1,
+                    y1=y1,
                     x2=x1 + TARGET_SIZE[0],
                     y2=y1 + TARGET_SIZE[1],
                 )
 
+            # aplica duração (trim/loop)
             seg = loop_or_trim(base, sc.duration)
             timeline.append(seg)
 
-        finally:
-            # ✅ fecha o reader do ffmpeg do clipe base
-            if base is not None:
-                try:
-                    base.close()
-                except Exception:
-                    pass
+            # ⚠️ NÃO feche "base" aqui.
+            # Em várias versões do MoviePy, "seg" (subclip) depende do reader de "base".
+            # Fechar "base" antes do write_videofile pode impedir o render ou gerar arquivo inválido.
+            bases_to_close.append(base)
 
+        if not timeline:
+            raise RuntimeError("Timeline vazia: nenhum segmento foi gerado.")
 
+        # concatena + aplica áudio
+        final = concatenate_videoclips(timeline, method="chain").set_audio(audio)
 
-PROVIDER_PREFIXES = ("pixabay_", "pexels_", "mix_", "stock_")
+        # escreve no disco (ESSENCIAL)
+        final.write_videofile(
+            str(out_path),
+            fps=fps,
+            **write_kwargs,
+            verbose=debug_ffmpeg,
+            logger="bar" if not debug_ffmpeg else None,
+        )
 
-def _strip_provider_prefix(folder_name: str) -> str:
-    for p in PROVIDER_PREFIXES:
-        if folder_name.startswith(p):
-            return folder_name[len(p):]
-    return folder_name
+        # valida (para evitar 'OK' mentiroso)
+        if (not out_path.exists()) or out_path.stat().st_size < 1024:
+            raise RuntimeError(f"Falha: arquivo não foi criado corretamente: {out_path}")
 
-def _add_index(index: Dict[str, List[Path]], key: str, files: List[Path]):
-    if not key:
-        return
-    index.setdefault(key, []).extend(files)
+    finally:
+        # fecha o clip final (isso costuma fechar readers encadeados corretamente)
+        if final is not None:
+            try:
+                final.close()
+            except Exception:
+                pass
 
+        # fecha todos os segments
+        for c in timeline:
+            try:
+                c.close()
+            except Exception:
+                pass
 
-def _resize_compat(clip: VideoFileClip, *, width: Optional[int] = None, height: Optional[int] = None) -> VideoFileClip:
-    """
-    Compat MoviePy:
-      - MoviePy 1.x: clip.resize(...)
-      - Algumas variações: clip.resized(...) (não existe no seu caso)
-    """
-    if hasattr(clip, "resize"):
-        # MoviePy clássico
-        return clip.resize(width=width, height=height)
-    if hasattr(clip, "resized"):
-        # Caso exista em outra versão
-        return clip.resized(width=width, height=height)
-    raise RuntimeError("MoviePy: não encontrei resize/resized nesta versão.")
+        # fecha áudio
+        if audio is not None:
+            try:
+                audio.close()
+            except Exception:
+                pass
 
+        # fecha bases (mantidas abertas até o fim)
+        for b in bases_to_close:
+            try:
+                b.close()
+            except Exception:
+                pass
 
 
 def main():
@@ -918,15 +1141,28 @@ def main():
     ap.add_argument("--preset", default="veryfast", help="Preset do libx264 (ultrafast..veryslow).")
     #ap.add_argument("--nvenc_preset", default="p4", help="Preset NVENC (p1..p7). Recomendo p4.")
     ap.add_argument(
-    "--nvenc_preset",
-    default="hq",
-    help="Preset NVENC: default|slow|medium|fast|hp|hq|bd|ll|llhq|llhp|lossless|losslesshp (recomendo hq ou fast).",
+        "--nvenc_preset",
+        default="hq",
+        help="Preset NVENC: default|slow|medium|fast|hp|hq|bd|ll|llhq|llhp|lossless|losslesshp (recomendo hq ou fast).",
     )
 
     ap.add_argument("--crf", type=int, default=20, help="CRF para libx264 (18=melhor, 23=menor).")
     ap.add_argument("--bitrate", default=None, help="Bitrate de vídeo (ex: 6M). Se vazio, automático.")
     ap.add_argument("--audio_bitrate", default="192k", help="Bitrate de áudio AAC (ex: 128k, 192k).")
     ap.add_argument("--debug_ffmpeg", action="store_true", help="Mostra se ffmpeg suporta NVENC/VideoToolbox etc.")
+
+    # IMPORTANTE (legendas por idioma):
+    # - Hoje não existe nenhum argumento para "captions" ou "legendagem".
+    # - Se você quer: estrutura_001.txt como base de cortes + legendas_001_{lang}.txt por idioma,
+    #   você precisará adicionar novos args (sem mudar a lógica atual), por exemplo:
+    #     --captions_pattern "narrativa/legendas_001_{lang}.txt"
+    #     --emit_srt (gera out/ep001_{lang}.srt)
+    #     --burn_in (opcional: bake no vídeo)
+    #
+    # E validar que:
+    # - nº de parágrafos em legendas_{lang} == nº de cenas em estrutura_001.txt
+    #
+    # Isso ainda não está implementado aqui (apenas documentado).
 
     args = ap.parse_args()
 
@@ -1016,6 +1252,16 @@ def main():
             single_folder_value=args.single_folder_value,
         )
 
+        # Observação importante (legendas / multi-idioma):
+        # - O `paras` é lido UMA vez de `--text` e é o mesmo para todos os idiomas.
+        # - Isso significa que, do jeito que está, as cenas (cortes/temas) são idênticas em pt/en/es,
+        #   mudando apenas o áudio e o nome do output.
+        # - Se a intenção é: "estrutura_001.txt define cortes" e "legendas por idioma definem o texto",
+        #   está ok manter `paras` fixo. O que falta é carregar texto de legenda por idioma e renderizar/emitir SRT.
+        #
+        # Se, ao contrário, você quiser que os cortes mudem por idioma (não recomendo),
+        # teria que ler um --text diferente por idioma e recalcular cenas.
+
         if args.print_plan:
             print(f"\n--- PLAN ({lang}) ---")
             for i, sc in enumerate(scenes, 1):
@@ -1065,3 +1311,11 @@ if __name__ == "__main__":
 
 
 #py -3.10 make_episode.py --audio audio\ep001_pt.mp3 --audio_pattern "audio\ep001_{lang}.mp3" --out_pattern "out\ep001_{lang}.mp4" --langs pt,en,es --text narrativa\ep001.txt --clips clips --vcodec h264_nvenc --nvenc_preset fast --debug_ffmpeg
+
+
+
+
+
+#py -3.10 make_episode.py --audio audio\ep001_pt.mp3 --audio_pattern "audio\ep001_{lang}.mp3" --out_pattern "out\ep001_{lang}.mp4" --langs pt,en,es --text narrativa\estrutura_001.txt --clips clips --vcodec h264_nvenc --nvenc_preset fast
+
+#teste de output: py -3.10 make_episode.py --audio audio\ep001_pt.mp3 --text narrativa\ep001_pt.txt --clips clips --print_plan
