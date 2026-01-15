@@ -243,3 +243,6 @@ if __name__ == "__main__":
 
 
 #py -3.10 .\make_bundle.py --episodes 1-1 --langs es,en,pt --narr_dir narrativa --voices_dir voices --clips clips --audio_dir audio --out_dir out --vcodec h264_nvenc --nvenc_preset fast --gpu
+
+
+#py -3.10 .\make_bundle.py --episodes ep001 --langs pt,en,es --narr_dir narrativa --voices_dir voices --clips clips --audio_dir audio --out_dir out --vcodec h264_nvenc --nvenc_preset fast --gpu

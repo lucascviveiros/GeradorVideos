@@ -2,14 +2,17 @@
 # -*- coding: utf-8 -*-
 
 # Exemplo:
-# py -3.10 .\make_audio.py --episode ep001 --narr_dir narrativa --out_dir audio --langs pt,en,es --gpu --voices_dir voices
-#
+# normal: py -3.10 .\make_audio.py --episode ep001 --narr_dir narrativa --out_dir audio --langs pt,en,es --gpu --voices_dir voices
+# FAST: py -3.10 .\make_audio.py --episode ep001 --narr_dir narrativa --out_dir audio --langs es --gpu --voices_dir voices --segments --normalize_wavs --max_chars 420 --min_chars 140 --mp3_vbr_q 2 --speed 1.20
 # (Opcional) ainda aceita --text como compat, mas o modo recomendado é acima.
 
 # convertendo para wav
 #ffmpeg -hide_banner -loglevel error -y -i "X:\GeradorVideos\voices\voice_pt.mp3" -vn -ac 1 -ar 24000 -c:a pcm_s16le "X:\GeradorVideos\voices\voice_pt.wav"
 #ffmpeg -hide_banner -loglevel error -y -i "X:\GeradorVideos\voices\voice_en.mp3" -vn -ac 1 -ar 24000 -c:a pcm_s16le "X:\GeradorVideos\voices\voice_en.wav"
 #ffmpeg -hide_banner -loglevel error -y -i "X:\GeradorVideos\voices\voice_es.mp3" -vn -ac 1 -ar 24000 -c:a pcm_s16le "X:\GeradorVideos\voices\voice_es.wav"
+
+#py -3.10 .\make_audio.py --episode ep001 --narr_dir narrativa --out_dir audio --langs pt,en,es --gpu --voices_dir voices --segments --normalize_wavs --max_chars 420 --min_chars 140 --mp3_vbr_q 2 --speed 1.20
+
 
 
 """
@@ -31,7 +34,9 @@ Docs/refs:
 from __future__ import annotations
 
 import argparse
+import os
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +51,8 @@ except Exception:
 
 
 MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
+
+FFMPEG_EXE = "ffmpeg"
 
 
 # -------------------------
@@ -67,11 +74,40 @@ def _run(cmd: List[str]) -> None:
         raise RuntimeError(f"Command failed ({p.returncode}): {' '.join(cmd)}\n\n{p.stdout}")
 
 
+def resolve_ffmpeg_exe() -> str:
+    """
+    Resolve o caminho real do ffmpeg.exe.
+    - Usa shutil.which("ffmpeg")
+    - Se cair no stub do WinGet (Links), tenta encontrar o ffmpeg real em WinGet\\Packages
+    """
+    p = shutil.which("ffmpeg")
+    if not p:
+        raise RuntimeError("ffmpeg não encontrado no PATH. Instale e adicione ao PATH.")
+
+    rp = str(Path(p).resolve())
+
+    # Se for o stub do WinGet, tente achar o binário real
+    if ("Microsoft\\WinGet\\Links" in rp) or ("Microsoft/WinGet/Links" in rp):
+        base = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Packages"
+        if base.exists():
+            for cand in base.rglob("ffmpeg.exe"):
+                try:
+                    _run([str(cand), "-version"])
+                    return str(cand)
+                except Exception:
+                    continue
+
+    # Fallback: o que o sistema devolveu (validando execução)
+    _run([rp, "-version"])
+    return rp
+
+
 def ensure_ffmpeg() -> None:
+    global FFMPEG_EXE
     try:
-        _run(["ffmpeg", "-version"])
+        FFMPEG_EXE = resolve_ffmpeg_exe()
     except Exception as e:
-        raise RuntimeError("ffmpeg não encontrado no PATH. Instale e adicione ao PATH.") from e
+        raise RuntimeError(f"ffmpeg não encontrado ou não executável: {FFMPEG_EXE}") from e
 
 
 def read_paragraphs(txt_path: Path) -> List[str]:
@@ -194,7 +230,7 @@ def ffmpeg_normalize_wav(
 ) -> None:
     out_wav.parent.mkdir(parents=True, exist_ok=True)
     _run([
-        "ffmpeg", "-y",
+        FFMPEG_EXE, "-y",
         "-i", str(in_wav),
         "-ac", str(channels),
         "-ar", str(sample_rate),
@@ -220,7 +256,7 @@ def ffmpeg_concat_wavs_to_master_wav(wavs: List[Path], out_wav: Path, sample_rat
     list_file.write_text("\n".join(make_line(w) for w in wavs) + "\n", encoding="utf-8")
 
     _run([
-        "ffmpeg", "-y",
+        FFMPEG_EXE, "-y",
         "-f", "concat", "-safe", "0",
         "-i", str(list_file),
         "-ac", "1",
@@ -259,7 +295,7 @@ def ffmpeg_encode_mp3_from_wav(
         parts.append(f"atempo={s:.6f}".rstrip("0").rstrip("."))
         return ",".join(parts)
 
-    cmd = ["ffmpeg", "-y", "-i", str(in_wav)]
+    cmd = [FFMPEG_EXE, "-y", "-i", str(in_wav)]
     filt = atempo_filter(speed)
     if filt:
         cmd += ["-filter:a", filt]
@@ -286,7 +322,7 @@ def get_voice_wav_for_lang(voices_dir: Path, lang: str, wav_sr: int) -> Path:
         out = wav
         out.parent.mkdir(parents=True, exist_ok=True)
         _run([
-            "ffmpeg", "-y",
+            FFMPEG_EXE, "-y",
             "-i", str(mp3),
             "-vn",
             "-ac", "1",
@@ -423,10 +459,10 @@ def main() -> None:
     ap.add_argument("--mp3_bitrate", default="192k", help="Bitrate MP3 CBR (default: 192k)")
     ap.add_argument("--mp3_vbr_q", type=int, default=None,
                     help="Se definido, usa VBR (-q:a). Ex: 2 (muito bom).")
-    ap.add_argument("--speed", type=float, default=1.0,
+    ap.add_argument("--speed", type=float, default=1.18,
                     help="Velocidade final (ffmpeg atempo). Ex: 1.20 (default: 1.0)")
-    ap.add_argument("--speed_suffix", default="_fast",
-                    help="Sufixo do arquivo acelerado (default: _fast).")
+    # ap.add_argument("--speed_suffix", default="_fast",
+    #                help="Sufixo do arquivo acelerado (default: _fast).")
 
     # Debug
     ap.add_argument("--debug_silence", action="store_true", help="Imprime silêncio inicial/final por chunk.")
@@ -485,8 +521,7 @@ def main() -> None:
         if not chunks:
             raise RuntimeError(f"Nenhum chunk após split/merge em: {spec.text_path}")
 
-        out_mp3 = out_dir / f"{ep}_{lang}.mp3"
-        out_mp3_fast = out_dir / f"{ep}_{lang}{args.speed_suffix}.mp3"
+        out_mp3_fast = out_dir / f"{ep}_{lang}.mp3"
         master_wav = out_dir / f"{ep}_{lang}.master.wav"
 
         if args.segments:
@@ -556,26 +591,15 @@ def main() -> None:
                     pass
                 master_wav = tmp
 
-        # MP3 normal (sem speed)
+        # MP3 fast (se speed != 1.0)
         ffmpeg_encode_mp3_from_wav(
             in_wav=master_wav,
-            out_mp3=out_mp3,
+            out_mp3=out_mp3_fast,
             bitrate=args.mp3_bitrate,
-            vbr_q=args.mp3_vbr_q,
-            speed=1.0,
+            vbr_q=args.mp3_vbr_q if args.mp3_vbr_q is not None else 2,
+            speed=float(args.speed),
         )
-        print(f"OK ({lang}) mp3: {out_mp3}")
-
-        # MP3 fast (se speed != 1.0)
-        if abs(float(args.speed) - 1.0) > 1e-6:
-            ffmpeg_encode_mp3_from_wav(
-                in_wav=master_wav,
-                out_mp3=out_mp3_fast,
-                bitrate=args.mp3_bitrate,
-                vbr_q=args.mp3_vbr_q if args.mp3_vbr_q is not None else 2,
-                speed=float(args.speed),
-            )
-            print(f"OK ({lang}) mp3 fast ({args.speed}x): {out_mp3_fast}")
+        print(f"OK ({lang}) mp3 fast ({args.speed}x): {out_mp3_fast}")
 
         # Limpa master wav
         try:
