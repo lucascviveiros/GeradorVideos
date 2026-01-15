@@ -18,11 +18,11 @@ Coqui XTTS v2 (local) - Batch TTS PT/EN/ES
 - Uma voz por idioma (obrigatório): voices/voice_pt.mp3, voice_en.mp3, voice_es.mp3
 - GPU suportada (RTX)
 - Saída: audio/ep001_pt.mp3, audio/ep001_en.mp3, audio/ep001_es.mp3
-- Opcional: segmentos por parágrafo + concat em MP3
+- Opcional: segmentos por chunk + concat em WAV mestre + encode MP3 (normal e fast)
 
 Requisitos:
   pip install TTS==0.22.0 soundfile
-  ffmpeg no PATH (para converter/concatenar MP3)
+  ffmpeg no PATH (para converter/concatenar/encodar)
 
 Docs/refs:
 - Coqui TTS + XTTS: https://docs.coqui.ai/en/latest/models/xtts.html
@@ -30,13 +30,12 @@ Docs/refs:
 
 from __future__ import annotations
 
-import sys
 import argparse
 import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from TTS.api import TTS
 
@@ -78,13 +77,11 @@ def ensure_ffmpeg() -> None:
 def read_paragraphs(txt_path: Path) -> List[str]:
     raw = txt_path.read_text(encoding="utf-8", errors="ignore").replace("\r\n", "\n")
     # Parágrafo = bloco separado por linha em branco
-    paras = [p.strip() for p in re.split(r"\n\s*\n+", raw) if p.strip()]
-    return paras
+    return [p.strip() for p in re.split(r"\n\s*\n+", raw) if p.strip()]
 
 
-def detect_silence_edges(samples, thr=0.002, pad=0):
-    # thr depende do nível; 0.002 é um bom começo para PCM normalizado
-    # Mantido como você colocou, mas com fallback simples caso numpy não exista.
+def detect_silence_edges(samples, thr: float = 0.002, pad: int = 0):
+    # fallback simples caso numpy não exista.
     try:
         import numpy as np
         x = np.asarray(samples)
@@ -103,7 +100,6 @@ def detect_silence_edges(samples, thr=0.002, pad=0):
         i1 = min(i1 + pad, n - 1)
         return i0, i1
     except Exception:
-        # fallback sem numpy (mais lento, mas evita quebrar o debug)
         n = len(samples)
         i0 = 0
         while i0 < n and abs(float(samples[i0])) < thr:
@@ -135,36 +131,26 @@ def strip_line_final_punct(s: str, lang: str) -> str:
     s = s.strip()
 
     if lang == "pt":
-        # PT: converter fim de frase em respiração SEM manter a pontuação
         s = re.sub(
             r"(?<!\d)([.!?]+)(\s+)(?=[A-ZÁÀÂÃÉÈÊÍÌÎÓÒÔÕÚÙÛÇ])",
             r"\n\n",
             s
         )
-        # remove pontuação final se sobrar no fim
         s = re.sub(r"(?<!\d)[.!?]+\s*$", "", s)
-
     else:
-        # EN/ES: manter pontuação, mas inserir respiração entre frases
         s = re.sub(
             r"(?<!\d)([.!?])(\s+)(?=[A-ZÁÀÂÃÉÈÊÍÌÎÓÒÔÕÚÙÛÇ])",
             r"\1\n\n",
             s
         )
 
-    # normaliza respirações repetidas
     s = re.sub(r"\n{3,}", "\n\n", s)
     return s.strip()
 
 
 def normalize_text_for_tts(s: str) -> str:
-    # Normalização leve para evitar artefatos
     s = s.strip()
-
-    # Remove aspas (retas e tipográficas) para o TTS não "pegar" esses caracteres
-    # Inclui: "  '  “ ”  ‘ ’  „  « »  `
     s = re.sub(r"[\"'“”‘’„«»`]", "", s)
-
     s = re.sub(r"[ \t]+", " ", s)
     s = re.sub(r"\n{3,}", "\n\n", s)
     return s
@@ -176,13 +162,9 @@ def tts_piece_to_wav(
     speaker_wav: str,
     language: str,
     wav_path: Path,
-    sample_rate: Optional[int],
+    sample_rate: int,
+    debug_silence: bool = False,
 ) -> None:
-    """
-    Gera áudio e grava WAV PCM_16.
-    - Se sample_rate vier None, tenta derivar do modelo (mais correto).
-    - Se não conseguir, cai em 24000.
-    """
     ensure_soundfile()
     wav_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -192,26 +174,16 @@ def tts_piece_to_wav(
         language=language,
     )
 
-    sr = sample_rate
-    if sr is None:
-        # tenta puxar do synthesizer se existir
-        sr = getattr(getattr(tts, "synthesizer", None), "output_sample_rate", None)
-    if not sr:
-        sr = 24000
+    if debug_silence:
+        try:
+            i0, i1 = detect_silence_edges(wav, thr=0.002, pad=0)
+            lead = i0 / float(sample_rate)
+            tail = (len(wav) - 1 - i1) / float(sample_rate)
+            print(f"    [silence] lead={lead:.3f}s tail={tail:.3f}s len={len(wav)/float(sample_rate):.2f}s")
+        except Exception:
+            pass
 
-    # DEBUG: silêncio no início/fim do array gerado (antes de escrever)
-    try:
-        i0, i1 = detect_silence_edges(wav, thr=0.002, pad=0)
-        lead = i0
-        tail = len(wav) - 1 - i1
-        lead_s = lead / float(sr)
-        tail_s = tail / float(sr)
-        print(f"    [silence] lead={lead_s:.3f}s tail={tail_s:.3f}s len={len(wav)/float(sr):.2f}s")
-    except Exception:
-        # não deixa debug derrubar a geração
-        pass
-
-    sf.write(str(wav_path), wav, int(sr), subtype="PCM_16")
+    sf.write(str(wav_path), wav, int(sample_rate), subtype="PCM_16")
 
 
 def ffmpeg_normalize_wav(
@@ -220,10 +192,6 @@ def ffmpeg_normalize_wav(
     sample_rate: int,
     channels: int = 1,
 ) -> None:
-    """
-    Normaliza WAV para PCM16, SR fixo e canais fixos.
-    Útil para garantir concat consistente em segmentos.
-    """
     out_wav.parent.mkdir(parents=True, exist_ok=True)
     _run([
         "ffmpeg", "-y",
@@ -235,23 +203,78 @@ def ffmpeg_normalize_wav(
     ])
 
 
-def ffmpeg_wav_to_mp3(wav: Path, out_mp3: Path, bitrate: str) -> None:
-    out_mp3.parent.mkdir(parents=True, exist_ok=True)
+def ffmpeg_concat_wavs_to_master_wav(wavs: List[Path], out_wav: Path, sample_rate: int) -> None:
+    out_wav.parent.mkdir(parents=True, exist_ok=True)
+
+    def to_ffmpeg_path(p: Path) -> str:
+        return str(p.expanduser().resolve()).replace("\\", "/")
+
+    def make_line(p: Path) -> str:
+        s = to_ffmpeg_path(p)
+        if " " in s or "'" in s:
+            s = s.replace("'", r"\'")
+            return f"file '{s}'"
+        return f"file {s}"
+
+    list_file = out_wav.with_suffix(".concat.txt")
+    list_file.write_text("\n".join(make_line(w) for w in wavs) + "\n", encoding="utf-8")
+
     _run([
         "ffmpeg", "-y",
-        "-i", str(wav),
-        "-c:a", "libmp3lame",
-        "-b:a", bitrate,
-        str(out_mp3),
+        "-f", "concat", "-safe", "0",
+        "-i", str(list_file),
+        "-ac", "1",
+        "-ar", str(sample_rate),
+        "-c:a", "pcm_s16le",
+        str(out_wav),
     ])
+
+    try:
+        list_file.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def ffmpeg_encode_mp3_from_wav(
+    in_wav: Path,
+    out_mp3: Path,
+    bitrate: str,
+    vbr_q: Optional[int],
+    speed: float,
+) -> None:
+    out_mp3.parent.mkdir(parents=True, exist_ok=True)
+
+    def atempo_filter(speed_val: float) -> Optional[str]:
+        if abs(speed_val - 1.0) < 1e-6:
+            return None
+
+        parts: List[str] = []
+        s = speed_val
+        while s > 2.0:
+            parts.append("atempo=2.0")
+            s /= 2.0
+        while s < 0.5:
+            parts.append("atempo=0.5")
+            s /= 0.5
+        parts.append(f"atempo={s:.6f}".rstrip("0").rstrip("."))
+        return ",".join(parts)
+
+    cmd = ["ffmpeg", "-y", "-i", str(in_wav)]
+    filt = atempo_filter(speed)
+    if filt:
+        cmd += ["-filter:a", filt]
+
+    cmd += ["-c:a", "libmp3lame"]
+    if vbr_q is not None:
+        cmd += ["-q:a", str(vbr_q)]
+    else:
+        cmd += ["-b:a", bitrate]
+
+    cmd += [str(out_mp3)]
+    _run(cmd)
 
 
 def get_voice_wav_for_lang(voices_dir: Path, lang: str, wav_sr: int) -> Path:
-    """
-    Retorna um voice_{lang}.wav.
-    - Se existir WAV, usa.
-    - Se só existir MP3, converte para WAV (PCM16 mono SR fixo) e passa a usar o WAV.
-    """
     wav = voices_dir / f"voice_{lang}.wav"
     mp3 = voices_dir / f"voice_{lang}.mp3"
 
@@ -278,39 +301,6 @@ def get_voice_wav_for_lang(voices_dir: Path, lang: str, wav_sr: int) -> Path:
     )
 
 
-def ffmpeg_concat_wavs_to_mp3(wavs: List[Path], out_mp3: Path, bitrate: str) -> None:
-    out_mp3.parent.mkdir(parents=True, exist_ok=True)
-
-    def to_ffmpeg_path(p: Path) -> str:
-        # concat demuxer funciona melhor com paths absolutos e forward slashes no Windows
-        return str(p.expanduser().resolve()).replace("\\", "/")
-
-    def make_line(p: Path) -> str:
-        s = to_ffmpeg_path(p)
-        # Se tiver espaço, envolve com aspas simples. Se tiver aspas simples, escapa.
-        if " " in s or "'" in s:
-            s = s.replace("'", r"\'")
-            return f"file '{s}'"
-        return f"file {s}"
-
-    list_file = out_mp3.with_suffix(".concat.txt")
-    list_file.write_text("\n".join(make_line(w) for w in wavs) + "\n", encoding="utf-8")
-
-    _run([
-        "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0",
-        "-i", str(list_file),
-        "-c:a", "libmp3lame",
-        "-b:a", bitrate,
-        str(out_mp3),
-    ])
-
-    try:
-        list_file.unlink(missing_ok=True)
-    except Exception:
-        pass
-
-
 def require_file(p: Path, label: str) -> Path:
     try:
         return p.expanduser().resolve(strict=True)
@@ -325,40 +315,124 @@ class LangSpec:
     voice_path: Path
 
 
+def split_big(p: str, max_chars: int) -> List[str]:
+    p = p.strip()
+    if len(p) <= max_chars:
+        return [p]
+
+    sentences = re.split(r"(?<=[.!?…])\s+", p)
+    sentences = [s.strip() for s in sentences if s.strip()]
+
+    chunks: List[str] = []
+    cur = ""
+
+    def flush():
+        nonlocal cur
+        if cur:
+            chunks.append(cur.strip())
+            cur = ""
+
+    for s in sentences:
+        if len(s) <= max_chars:
+            if len(cur) + len(s) + (1 if cur else 0) <= max_chars:
+                cur = (cur + " " + s).strip()
+            else:
+                flush()
+                cur = s
+        else:
+            flush()
+            words = s.split()
+            wcur = ""
+            for w in words:
+                if len(wcur) + len(w) + (1 if wcur else 0) <= max_chars:
+                    wcur = (wcur + " " + w).strip()
+                else:
+                    if wcur:
+                        chunks.append(wcur)
+                    wcur = w
+            if wcur:
+                chunks.append(wcur)
+
+    flush()
+    return chunks
+
+
+def merge_small_chunks(chunks: List[str], min_chars: int) -> List[str]:
+    if min_chars <= 0:
+        return chunks
+
+    out: List[str] = []
+    buf = ""
+
+    def flush():
+        nonlocal buf
+        if buf.strip():
+            out.append(buf.strip())
+        buf = ""
+
+    for c in chunks:
+        c = c.strip()
+        if not c:
+            continue
+
+        if not buf:
+            buf = c
+            continue
+
+        if len(buf) < min_chars:
+            buf = buf + "\n\n" + c
+        else:
+            flush()
+            buf = c
+
+    flush()
+    return out
+
+
 # -------------------------
 # Main
 # -------------------------
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="Coqui XTTS v2 local: gera MP3 PT/EN/ES usando 1 TXT por idioma e 1 voice mp3 por idioma."
+        description="Coqui XTTS v2 local: gera MP3 PT/EN/ES usando 1 TXT por idioma e 1 voice por idioma."
     )
 
-    # NOVO: episódio + diretórios
-    ap.add_argument("--episode", required=True, help="Ex: ep001 (vai buscar ep001_pt.txt, ep001_en.txt, ep001_es.txt)")
-    ap.add_argument("--narr_dir", default="narrativa", help="Pasta onde ficam os .txt por idioma (default: narrativa)")
+    ap.add_argument("--episode", required=True, help="Ex: ep001 (busca ep001_pt.txt, ep001_en.txt, ep001_es.txt)")
+    ap.add_argument("--narr_dir", default="narrativa", help="Pasta onde ficam os .txt (default: narrativa)")
     ap.add_argument("--voices_dir", default="voices", help="Pasta onde ficam voice_pt.mp3 etc. (default: voices)")
     ap.add_argument("--out_dir", default="audio", help="Pasta de saída (default: audio)")
 
     ap.add_argument("--langs", default="pt,en,es", help="Idiomas: pt,en,es")
     ap.add_argument("--gpu", action="store_true", help="Usar GPU (recomendado).")
-    ap.add_argument("--mp3_bitrate", default="192k", help="Bitrate MP3 (default: 192k)")
 
-    # Mantido: segmentos
     ap.add_argument("--segments", action="store_true",
-                    help="Gera WAV por parágrafo (ep001_pt_01.wav...) e concatena em MP3.")
-    ap.add_argument("--max_chars", type=int, default=650,
-                    help="Se um parágrafo for muito longo, divide em blocos <= max_chars (default: 650).")
+                    help="Gera WAV por chunk e concatena em WAV mestre antes de encodar MP3.")
+
+    ap.add_argument("--max_chars", type=int, default=420,
+                    help="Divide chunks longos em <= max_chars (default: 420).")
     ap.add_argument("--min_chars", type=int, default=140,
-                    help="Tamanho mínimo por segmento; segmentos menores são juntados (default: 140).")
+                    help="Junta chunks curtos até >= min_chars (default: 140).")
 
-    # NOVO: estabilidade de áudio (SR fixo + normalização opcional)
     ap.add_argument("--wav_sr", type=int, default=24000,
-                    help="Sample rate do WAV gerado (default: 24000; recomendado para XTTS v2).")
+                    help="Sample rate do WAV (default: 24000; recomendado para XTTS v2).")
     ap.add_argument("--normalize_wavs", action="store_true",
-                    help="Normaliza WAVs (PCM16, mono, SR fixo) antes de concatenar/converter.")
+                    help="Normaliza WAVs (PCM16, mono, SR fixo) antes de concatenar.")
 
-    # Compat: aceita --text, mas não é mais necessário
+    # MP3
+    ap.add_argument("--mp3_bitrate", default="192k", help="Bitrate MP3 CBR (default: 192k)")
+    ap.add_argument("--mp3_vbr_q", type=int, default=None,
+                    help="Se definido, usa VBR (-q:a). Ex: 2 (muito bom).")
+    ap.add_argument("--speed", type=float, default=1.0,
+                    help="Velocidade final (ffmpeg atempo). Ex: 1.20 (default: 1.0)")
+    ap.add_argument("--speed_suffix", default="_fast",
+                    help="Sufixo do arquivo acelerado (default: _fast).")
+
+    # Debug
+    ap.add_argument("--debug_silence", action="store_true", help="Imprime silêncio inicial/final por chunk.")
+    ap.add_argument("--debug_metrics", action="store_true", help="Imprime métricas por chunk (dur/cps).")
+
+    # Compat
     ap.add_argument("--text", default=None, help="(Compat) Ignorado no modo por-idioma; use --episode + --narr_dir.")
 
     args = ap.parse_args()
@@ -384,99 +458,11 @@ def main() -> None:
     if not ep:
         raise RuntimeError("--episode inválido.")
 
-    # Monta specs por idioma (TXT e voice obrigatórios)
     specs: List[LangSpec] = []
     for lang in langs:
         txt = require_file(narr_dir / f"{ep}_{lang}.txt", label=f"texto {lang}")
         voice = get_voice_wav_for_lang(voices_dir, lang, args.wav_sr)
         specs.append(LangSpec(lang=lang, text_path=txt, voice_path=voice))
-
-    def split_big(p: str, max_chars: int) -> List[str]:
-        """
-        Divide texto grande em blocos <= max_chars com cortes naturais:
-        1) tenta dividir por fim de frase (. ! ? …)
-        2) agrupa sentenças até max_chars
-        3) se alguma sentença for maior que max_chars, divide por palavras
-        """
-        p = p.strip()
-        if len(p) <= max_chars:
-            return [p]
-
-        # 1) split por fim de frase mantendo pontuação
-        sentences = re.split(r"(?<=[.!?…])\s+", p)
-        sentences = [s.strip() for s in sentences if s.strip()]
-
-        chunks: List[str] = []
-        cur = ""
-
-        def flush():
-            nonlocal cur
-            if cur:
-                chunks.append(cur.strip())
-                cur = ""
-
-        # 2) agrupa sentenças
-        for s in sentences:
-            if len(s) <= max_chars:
-                if len(cur) + len(s) + (1 if cur else 0) <= max_chars:
-                    cur = (cur + " " + s).strip()
-                else:
-                    flush()
-                    cur = s
-            else:
-                # 3) sentença enorme: quebra por palavras
-                flush()
-                words = s.split()
-                wcur = ""
-                for w in words:
-                    if len(wcur) + len(w) + (1 if wcur else 0) <= max_chars:
-                        wcur = (wcur + " " + w).strip()
-                    else:
-                        if wcur:
-                            chunks.append(wcur)
-                        wcur = w
-                if wcur:
-                    chunks.append(wcur)
-
-        flush()
-        return chunks
-
-    def merge_small_chunks(chunks: List[str], min_chars: int) -> List[str]:
-        """
-        Junta chunks pequenos em blocos maiores.
-        - Se min_chars <= 0, retorna os chunks originais.
-        """
-        if min_chars <= 0:
-            return chunks
-
-        out: List[str] = []
-        buf = ""
-
-        def flush():
-            nonlocal buf
-            if buf.strip():
-                out.append(buf.strip())
-            buf = ""
-
-        for c in chunks:
-            c = c.strip()
-            if not c:
-                continue
-
-            if not buf:
-                buf = c
-                continue
-
-            # tenta juntar
-            candidate = buf + "\n\n" + c
-            if len(buf) < min_chars:
-                buf = candidate
-            else:
-                flush()
-                buf = c
-
-        flush()
-        return out
 
     # Carrega modelo uma vez
     tts = TTS(MODEL_NAME)
@@ -484,100 +470,118 @@ def main() -> None:
 
     for spec in specs:
         lang = spec.lang
+
         paras = [normalize_text_for_tts(p) for p in read_paragraphs(spec.text_path)]
         if not paras:
             raise RuntimeError(f"Nenhum parágrafo encontrado em: {spec.text_path}")
 
+        chunks: List[str] = []
+        for p in paras:
+            chunks.extend(split_big(p, args.max_chars))
+
+        chunks = [strip_line_final_punct(c, lang) for c in chunks if c.strip()]
+        chunks = merge_small_chunks(chunks, args.min_chars)
+
+        if not chunks:
+            raise RuntimeError(f"Nenhum chunk após split/merge em: {spec.text_path}")
+
         out_mp3 = out_dir / f"{ep}_{lang}.mp3"
+        out_mp3_fast = out_dir / f"{ep}_{lang}{args.speed_suffix}.mp3"
+        master_wav = out_dir / f"{ep}_{lang}.master.wav"
 
         if args.segments:
             seg_wavs: List[Path] = []
-            seg_idx = 1
 
-            for p in paras:
-                pieces = split_big(p, args.max_chars)
-                pieces = merge_small_chunks(pieces, args.min_chars)
+            for i, piece in enumerate(chunks, start=1):
+                raw_wav = out_dir / f"{ep}_{lang}_{i:02d}.raw.wav"
+                final_wav = out_dir / f"{ep}_{lang}_{i:02d}.wav"
 
-                for piece in pieces:
-                    piece = strip_line_final_punct(piece, lang)
-                    raw_wav = out_dir / f"{ep}_{lang}_{seg_idx:02d}.raw.wav"
-                    final_wav = out_dir / f"{ep}_{lang}_{seg_idx:02d}.wav"
+                tts_piece_to_wav(
+                    tts=tts,
+                    text=piece,
+                    speaker_wav=str(spec.voice_path),
+                    language=lang,
+                    wav_path=raw_wav,
+                    sample_rate=args.wav_sr,
+                    debug_silence=args.debug_silence,
+                )
 
-                    tts_piece_to_wav(
-                        tts=tts,
-                        text=piece,
-                        speaker_wav=str(spec.voice_path),
-                        language=lang,
-                        wav_path=raw_wav,
-                        sample_rate=args.wav_sr,
-                    )
+                if args.normalize_wavs:
+                    ffmpeg_normalize_wav(raw_wav, final_wav, sample_rate=args.wav_sr, channels=1)
+                    try:
+                        raw_wav.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    seg_path = final_wav
+                else:
+                    seg_path = raw_wav
 
-                    if args.normalize_wavs:
-                        ffmpeg_normalize_wav(raw_wav, final_wav, sample_rate=args.wav_sr, channels=1)
-                        try:
-                            raw_wav.unlink(missing_ok=True)
-                        except Exception:
-                            pass
-                        seg_wavs.append(final_wav)
-                        seg_path = final_wav
-                    else:
-                        seg_wavs.append(raw_wav)
-                        seg_path = raw_wav
+                seg_wavs.append(seg_path)
 
-                    # DEBUG: métricas por segmento (duração/velocidade)
+                if args.debug_metrics:
                     try:
                         dur = wav_duration_seconds(seg_path)
                         text_len = len(piece)
                         word_count = len(piece.split())
                         sec_per_word = dur / max(word_count, 1)
                         cps = text_len / max(dur, 1e-6)
-
                         print(
-                            f"[SEG {seg_idx:02d}] dur={dur:5.2f}s words={word_count:3d} "
+                            f"[SEG {i:02d}] dur={dur:5.2f}s words={word_count:3d} "
                             f"sec/word={sec_per_word:4.2f} cps={cps:5.1f} "
                             f"text='{piece[:60]}...'"
                         )
                     except Exception:
                         pass
 
-                    seg_idx += 1
-
-            ffmpeg_concat_wavs_to_mp3(seg_wavs, out_mp3, bitrate=args.mp3_bitrate)
-            print(f"OK ({lang}) segments+mp3: {out_mp3}")
+            ffmpeg_concat_wavs_to_master_wav(seg_wavs, master_wav, sample_rate=args.wav_sr)
 
         else:
-            tmp_raw = out_dir / f"{ep}_{lang}.raw.wav"
-            tmp_wav = out_dir / f"{ep}_{lang}.wav"
-            full_text = "\n\n".join(paras)
-            full_text = strip_line_final_punct(full_text, lang)
-
+            full_text = "\n\n".join(chunks)
             tts_piece_to_wav(
                 tts=tts,
                 text=full_text,
                 speaker_wav=str(spec.voice_path),
                 language=lang,
-                wav_path=tmp_raw,
+                wav_path=master_wav,
                 sample_rate=args.wav_sr,
+                debug_silence=args.debug_silence,
             )
 
             if args.normalize_wavs:
-                ffmpeg_normalize_wav(tmp_raw, tmp_wav, sample_rate=args.wav_sr, channels=1)
+                tmp = out_dir / f"{ep}_{lang}.master.norm.wav"
+                ffmpeg_normalize_wav(master_wav, tmp, sample_rate=args.wav_sr, channels=1)
                 try:
-                    tmp_raw.unlink(missing_ok=True)
+                    master_wav.unlink(missing_ok=True)
                 except Exception:
                     pass
-                source_wav = tmp_wav
-            else:
-                source_wav = tmp_raw
+                master_wav = tmp
 
-            ffmpeg_wav_to_mp3(source_wav, out_mp3, bitrate=args.mp3_bitrate)
+        # MP3 normal (sem speed)
+        ffmpeg_encode_mp3_from_wav(
+            in_wav=master_wav,
+            out_mp3=out_mp3,
+            bitrate=args.mp3_bitrate,
+            vbr_q=args.mp3_vbr_q,
+            speed=1.0,
+        )
+        print(f"OK ({lang}) mp3: {out_mp3}")
 
-            try:
-                source_wav.unlink(missing_ok=True)
-            except Exception:
-                pass
+        # MP3 fast (se speed != 1.0)
+        if abs(float(args.speed) - 1.0) > 1e-6:
+            ffmpeg_encode_mp3_from_wav(
+                in_wav=master_wav,
+                out_mp3=out_mp3_fast,
+                bitrate=args.mp3_bitrate,
+                vbr_q=args.mp3_vbr_q if args.mp3_vbr_q is not None else 2,
+                speed=float(args.speed),
+            )
+            print(f"OK ({lang}) mp3 fast ({args.speed}x): {out_mp3_fast}")
 
-            print(f"OK ({lang}) mp3: {out_mp3}")
+        # Limpa master wav
+        try:
+            Path(master_wav).unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
