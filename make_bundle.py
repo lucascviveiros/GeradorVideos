@@ -98,12 +98,15 @@ def main() -> None:
     ap.add_argument("--out_dir", default="out", help="Saída de vídeos")
     ap.add_argument("--clips", required=True, help="Pasta raiz de clipes por tag (subpastas)")
 
-    # Estrutura: por padrão, estrutura_001.txt casa com ep001
-    #ap.add_argument(
-     #   "--structure_pattern",
-      #  default="estrutura_{num:03d}.txt",
-       # help="Pattern dentro de narr_dir. Default: estrutura_{num:03d}.txt"
-    #)
+    # NOVO: padrão do arquivo de estrutura com TAGS B-ROLL
+    # {id}  -> ep001
+    # {num} -> 1
+    # {num:03d} -> 001
+    ap.add_argument(
+        "--structure_pattern",
+        default="estrutura_{num:03d}.txt",
+        help="Nome do arquivo de estrutura/tagueado. Ex: estrutura_{num:03d}.txt",
+    )
 
     # Áudio (repasse para make_audio.py)
     ap.add_argument("--gpu", action="store_true", help="Ativa GPU no TTS (make_audio.py)")
@@ -154,12 +157,10 @@ def main() -> None:
     episodes = parse_episodes(args.episodes)
 
     for ep_id, ep_num in episodes:
-        # estrutura do episódio
-        # structure_name = args.structure_pattern.format(num=ep_num)
-        #structure_path = (narr_dir / structure_name)
-        #must_file(structure_path, f"Estrutura ({ep_id})")
-        structure_path = narr_dir / f"{ep_id}_pt.txt"
-        must_file(structure_path, f"Estrutura base PT ({ep_id})")
+        # >>> AQUI mudou: usamos a estrutura com TAGS B-ROLL, não o epXXX_pt.txt <<<
+        structure_name = args.structure_pattern.format(id=ep_id, num=ep_num)
+        structure_path = narr_dir / structure_name
+        must_file(structure_path, f"Estrutura base TAGs ({ep_id})")
 
         # 1) AUDIO por idioma (pula se já existir)
         for lang in langs:
@@ -183,8 +184,17 @@ def main() -> None:
             if args.gpu:
                 cmd_audio.append("--gpu")
 
-            run(cmd_audio)
+            # Repasse do preset FAST
+            cmd_audio += [
+                "--segments",
+                "--normalize_wavs",
+                "--max_chars", "420",
+                "--min_chars", "140",
+                "--mp3_vbr_q", "2",
+                "--speed", "1.20",
+            ]
 
+            run(cmd_audio)
 
         # 2) VIDEO por idioma
         for lang in langs:
@@ -192,12 +202,12 @@ def main() -> None:
             must_file(audio_path, f"Áudio gerado ({ep_id}/{lang})")
 
             out_path = out_dir / f"{ep_id}_{lang}.mp4"
-        
+
             cmd_video = [
                 sys.executable, "make_episode.py",
                 "--audio", str(audio_path),
                 "--langs", lang,
-                "--text", str(structure_path),   # estrutura editorial
+                "--text", str(structure_path),
                 "--clips", str(clips_dir),
                 "--out", str(out_path),
 
@@ -239,10 +249,4 @@ if __name__ == "__main__":
     main()
 
 
-#py -3.10 make_bundle.py --episodes 1-1 --langs pt,en,es --narr_dir narrativa --voices_dir voices --clips clips --vcodec h264_nvenc --nvenc_preset fast --gpu
-
-
-#py -3.10 .\make_bundle.py --episodes 1-1 --langs es,en,pt --narr_dir narrativa --voices_dir voices --clips clips --audio_dir audio --out_dir out --vcodec h264_nvenc --nvenc_preset fast --gpu
-
-
-#py -3.10 .\make_bundle.py --episodes ep001 --langs pt,en,es --narr_dir narrativa --voices_dir voices --clips clips --audio_dir audio --out_dir out --vcodec h264_nvenc --nvenc_preset fast --gpu
+#py -3.10 .\make_bundle.py --episodes ep001 --narr_dir narrativa --audio_dir audio --out_dir out --langs pt --voices_dir voices --gpu --clips clips --vcodec h264_nvenc --nvenc_preset fast

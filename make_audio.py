@@ -3,7 +3,7 @@
 
 # Exemplo:
 # normal: py -3.10 .\make_audio.py --episode ep001 --narr_dir narrativa --out_dir audio --langs pt,en,es --gpu --voices_dir voices
-# FAST: py -3.10 .\make_audio.py --episode ep001 --narr_dir narrativa --out_dir audio --langs es --gpu --voices_dir voices --segments --normalize_wavs --max_chars 420 --min_chars 140 --mp3_vbr_q 2 --speed 1.20
+# FAST: py -3.10 .\make_audio.py --episode ep001 --narr_dir narrativa --out_dir audio --langs pt --gpu --voices_dir voices --segments --normalize_wavs --max_chars 420 --min_chars 140 --mp3_vbr_q 2 --speed 1.20
 # (Opcional) ainda aceita --text como compat, mas o modo recomendado é acima.
 
 # convertendo para wav
@@ -11,8 +11,8 @@
 #ffmpeg -hide_banner -loglevel error -y -i "X:\GeradorVideos\voices\voice_en.mp3" -vn -ac 1 -ar 24000 -c:a pcm_s16le "X:\GeradorVideos\voices\voice_en.wav"
 #ffmpeg -hide_banner -loglevel error -y -i "X:\GeradorVideos\voices\voice_es.mp3" -vn -ac 1 -ar 24000 -c:a pcm_s16le "X:\GeradorVideos\voices\voice_es.wav"
 
-#py -3.10 .\make_audio.py --episode ep001 --narr_dir narrativa --out_dir audio --langs pt,en,es --gpu --voices_dir voices --segments --normalize_wavs --max_chars 420 --min_chars 140 --mp3_vbr_q 2 --speed 1.20
-
+#BEST ALL LANGUAGES
+#py -3.10 .\make_audio.py --episode ep001 --narr_dir narrativa --out_dir audio --langs pt,en,es --gpu --voices_dir voices --segments --normalize_wavs --max_chars 420 --min_chars 130 --mp3_vbr_q 2 --speed 1.20
 
 
 """
@@ -58,6 +58,25 @@ FFMPEG_EXE = "ffmpeg"
 # -------------------------
 # Utils
 # -------------------------
+def cleanup_segment_wavs(out_dir: Path, ep: str, lang: str, seg_wavs: List[Path]) -> None:
+    """
+    Apaga os WAVs segmentados (e possíveis sobras .raw.wav) gerados no modo --segments.
+    - seg_wavs: lista exata de arquivos usados na concatenação (raw.wav ou .wav normalizado)
+    """
+    # remove os arquivos efetivamente usados
+    for p in seg_wavs:
+        try:
+            Path(p).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    # segurança: remove sobras raw que podem ficar em edge cases
+    for p in out_dir.glob(f"{ep}_{lang}_*.raw.wav"):
+        try:
+            p.unlink(missing_ok=True)
+        except Exception:
+            pass
+
 
 def ensure_soundfile() -> None:
     if sf is None:
@@ -459,7 +478,7 @@ def main() -> None:
     ap.add_argument("--mp3_bitrate", default="192k", help="Bitrate MP3 CBR (default: 192k)")
     ap.add_argument("--mp3_vbr_q", type=int, default=None,
                     help="Se definido, usa VBR (-q:a). Ex: 2 (muito bom).")
-    ap.add_argument("--speed", type=float, default=1.18,
+    ap.add_argument("--speed", type=float, default=1.25,
                     help="Velocidade final (ffmpeg atempo). Ex: 1.20 (default: 1.0)")
     # ap.add_argument("--speed_suffix", default="_fast",
     #                help="Sufixo do arquivo acelerado (default: _fast).")
@@ -600,6 +619,9 @@ def main() -> None:
             speed=float(args.speed),
         )
         print(f"OK ({lang}) mp3 fast ({args.speed}x): {out_mp3_fast}")
+        if args.segments:
+            cleanup_segment_wavs(out_dir=out_dir, ep=ep, lang=lang, seg_wavs=seg_wavs)
+
 
         # Limpa master wav
         try:
