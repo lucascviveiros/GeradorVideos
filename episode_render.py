@@ -137,7 +137,23 @@ def build_write_kwargs(
     bitrate: Optional[str],
     audio_bitrate: str,
     threads: int,
+    *,
+    test_render: bool = False,          # <-- NOVO
+    test_crf: int = 35,                 # <-- NOVO
+    test_preset: str = "ultrafast",      # <-- NOVO
+    test_scale: Optional[int] = 720,    # <-- NOVO (altura)
+    test_audio_bitrate: str = "96k",     # <-- NOVO
 ) -> Dict:
+    """
+    Retorna kwargs para MoviePy.write_videofile.
+
+    Modo teste (test_render=True):
+      - força libx264 para máxima compatibilidade
+      - preset ultrafast
+      - CRF alto (pior qualidade / mais rápido)
+      - downscale via ffmpeg_params (ex: 720p)
+      - áudio menor
+    """
     kwargs: Dict = {
         "codec": vcodec,
         "audio_codec": "aac",
@@ -149,12 +165,26 @@ def build_write_kwargs(
     if bitrate:
         kwargs["bitrate"] = bitrate
 
+    if test_render:
+        # Força modo rápido/ruim
+        kwargs["codec"] = "libx264"
+        kwargs["preset"] = test_preset
+        kwargs["audio_bitrate"] = test_audio_bitrate
+
+        ffmpeg_params += ["-crf", str(int(test_crf)), "-pix_fmt", "yuv420p", "-profile:v", "baseline"]
+        if test_scale and int(test_scale) > 0:
+            # preserva aspecto: define altura e largura -2 (par)
+            ffmpeg_params += ["-vf", f"scale=-2:{int(test_scale)}"]
+        kwargs["ffmpeg_params"] = ffmpeg_params
+        return kwargs
+
+    # normal
     if vcodec == "libx264":
         kwargs["preset"] = preset
         ffmpeg_params += ["-crf", str(crf), "-pix_fmt", "yuv420p", "-profile:v", "high"]
     elif vcodec in ("h264_nvenc", "hevc_nvenc"):
         nvenc_ok = {
-            "default","slow","medium","fast","hp","hq","bd","ll","llhq","llhp","lossless","losslesshp"
+            "default", "slow", "medium", "fast", "hp", "hq", "bd", "ll", "llhq", "llhp", "lossless", "losslesshp"
         }
         preset_final = nvenc_preset if nvenc_preset in nvenc_ok else "hq"
         ffmpeg_params += ["-preset", preset_final, "-rc", "vbr", "-cq", "19", "-pix_fmt", "yuv420p", "-profile:v", "high"]
@@ -169,9 +199,9 @@ def build_write_kwargs(
 def ffprobe_stream_info(path: Path) -> Tuple[Optional[int], Optional[int], Optional[str]]:
     try:
         cmd = [
-            "ffprobe","-v","error","-select_streams","v:0",
-            "-show_entries","stream=width,height,sample_aspect_ratio",
-            "-of","default=nk=1:nw=1", str(path),
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=width,height,sample_aspect_ratio",
+            "-of", "default=nk=1:nw=1", str(path),
         ]
         r = subprocess.run(cmd, capture_output=True, text=True)
         out = (r.stdout or "").strip().splitlines()
@@ -188,8 +218,8 @@ def ffprobe_stream_info(path: Path) -> Tuple[Optional[int], Optional[int], Optio
 def ffmpeg_cropdetect(path: Path, seconds: float = 1.0) -> Optional[Tuple[int, int, int, int]]:
     try:
         cmd = [
-            "ffmpeg","-hide_banner","-ss","0","-t",str(seconds),"-i",str(path),
-            "-vf","cropdetect=24:16:0","-f","null","-",
+            "ffmpeg", "-hide_banner", "-ss", "0", "-t", str(seconds), "-i", str(path),
+            "-vf", "cropdetect=24:16:0", "-f", "null", "-",
         ]
         r = subprocess.run(cmd, capture_output=True, text=True)
         out = (r.stderr or "") + "\n" + (r.stdout or "")
@@ -247,20 +277,20 @@ def normalize_clip_to_cache(
     vcodec = pick_cache_vcodec(preferred_vcodec)
 
     if vcodec == "libx264":
-        v_params = ["-c:v","libx264","-preset","veryfast","-crf","20"]
+        v_params = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
     elif vcodec == "h264_nvenc":
-        v_params = ["-c:v","h264_nvenc","-preset","fast","-rc","vbr","-cq","19"]
+        v_params = ["-c:v", "h264_nvenc", "-preset", "fast", "-rc", "vbr", "-cq", "19"]
     elif vcodec == "h264_videotoolbox":
-        v_params = ["-c:v","h264_videotoolbox"]
+        v_params = ["-c:v", "h264_videotoolbox"]
     else:
-        v_params = ["-c:v","libx264","-preset","veryfast","-crf","20"]
+        v_params = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
 
     cmd = [
-        "ffmpeg","-y","-hide_banner","-i",str(src),
-        "-vf",vf, "-r",str(cache_fps), "-vsync","cfr",
+        "ffmpeg", "-y", "-hide_banner", "-i", str(src),
+        "-vf", vf, "-r", str(cache_fps), "-vsync", "cfr",
         *v_params,
-        "-c:a","aac","-b:a","192k",
-        "-movflags","+faststart",
+        "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart",
         str(out),
     ]
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -289,6 +319,12 @@ def render_video(
     cache_dir: Optional[Path] = None,
     cache_force: bool = False,
     cache_fps: int = 30,
+    *,
+    test_render: bool = False,          # <-- NOVO
+    test_scale: int = 720,              # <-- NOVO
+    test_crf: int = 35,                 # <-- NOVO
+    test_preset: str = "ultrafast",      # <-- NOVO
+    test_audio_bitrate: str = "96k",     # <-- NOVO
 ):
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -296,14 +332,14 @@ def render_video(
     enc_dump = ffmpeg_encoders_text()
     if debug_ffmpeg:
         print("\n[DEBUG] ffmpeg encoders:")
-        for name in ("h264_nvenc","hevc_nvenc","h264_videotoolbox","hevc_videotoolbox","libx264"):
+        for name in ("h264_nvenc", "hevc_nvenc", "h264_videotoolbox", "hevc_videotoolbox", "libx264"):
             print(f"  {name}: {ffmpeg_has_encoder(name, enc_dump)}")
 
     if vcodec == "auto":
         vcodec = pick_default_vcodec_auto(enc_dump)
         print(f"[INFO] vcodec auto selecionado: {vcodec}")
 
-    if vcodec != "libx264" and not ffmpeg_has_encoder(vcodec, enc_dump):
+    if (not test_render) and vcodec != "libx264" and not ffmpeg_has_encoder(vcodec, enc_dump):
         print(f"[WARN] ffmpeg não suporta '{vcodec}'. Caindo para libx264.")
         vcodec = "libx264"
 
@@ -316,8 +352,14 @@ def render_video(
         bitrate=bitrate,
         audio_bitrate=audio_bitrate,
         threads=threads,
+        test_render=test_render,
+        test_crf=test_crf,
+        test_preset=test_preset,
+        test_scale=test_scale,
+        test_audio_bitrate=test_audio_bitrate,
     )
 
+    # No teste, a gente não força 1080p aqui; o -vf scale (ffmpeg_params) resolve.
     TARGET_W, TARGET_H = 1920, 1080
 
     audio = None
@@ -344,18 +386,20 @@ def render_video(
             else:
                 base = VideoFileClip(str(clip_path_use), audio=False)
 
-                cd = ffmpeg_cropdetect(clip_path_use, seconds=1.0)
-                if cd:
-                    w, h, x, y = cd
-                    base = crop_compat(base, x1=x, y1=y, x2=x + w, y2=y + h)
+                # No modo teste, evita cropdetect + resize/crop pesado (ganho real de tempo)
+                if not test_render:
+                    cd = ffmpeg_cropdetect(clip_path_use, seconds=1.0)
+                    if cd:
+                        w, h, x, y = cd
+                        base = crop_compat(base, x1=x, y1=y, x2=x + w, y2=y + h)
 
-                base = _resize_compat(base, height=TARGET_H)
-                if base.w < TARGET_W:
-                    base = _resize_compat(base, width=TARGET_W)
+                    base = _resize_compat(base, height=TARGET_H)
+                    if base.w < TARGET_W:
+                        base = _resize_compat(base, width=TARGET_W)
 
-                x1 = int((base.w - TARGET_W) / 2)
-                y1 = int((base.h - TARGET_H) / 2)
-                base = crop_compat(base, x1=x1, y1=y1, x2=x1 + TARGET_W, y2=y1 + TARGET_H)
+                    x1 = int((base.w - TARGET_W) / 2)
+                    y1 = int((base.h - TARGET_H) / 2)
+                    base = crop_compat(base, x1=x1, y1=y1, x2=x1 + TARGET_W, y2=y1 + TARGET_H)
 
             seg = loop_or_trim(base, sc.duration)
             timeline.append(seg)
@@ -364,7 +408,8 @@ def render_video(
         if not timeline:
             raise RuntimeError("Timeline vazia: nenhum segmento foi gerado.")
 
-        final = concatenate_videoclips(timeline, method="chain").set_audio(audio)
+        method = "compose" if test_render else "chain"
+        final = concatenate_videoclips(timeline, method=method)
 
         final.write_videofile(
             str(out_path),
@@ -379,17 +424,25 @@ def render_video(
 
     finally:
         if final is not None:
-            try: final.close()
-            except Exception: pass
+            try:
+                final.close()
+            except Exception:
+                pass
 
         for c in timeline:
-            try: c.close()
-            except Exception: pass
+            try:
+                c.close()
+            except Exception:
+                pass
 
         if audio is not None:
-            try: audio.close()
-            except Exception: pass
+            try:
+                audio.close()
+            except Exception:
+                pass
 
         for b in bases_to_close:
-            try: b.close()
-            except Exception: pass
+            try:
+                b.close()
+            except Exception:
+                pass

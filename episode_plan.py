@@ -8,11 +8,12 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Set
 
 import yaml
 
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".m4v", ".webm"}
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 
 # Fallback em duas camadas (segunda camada fixa)
 SECONDARY_FALLBACK_TAG = "architecture"
@@ -181,6 +182,8 @@ class Scene:
     duration: float
     clip_path: Path
     forced_tags: Optional[List[str]] = None
+    # NOVO: tag desejada originalmente (para log azul quando houver sinônimo)
+    requested_tag: Optional[str] = None
 
 
 # --------------------------
@@ -322,7 +325,50 @@ def choose_tag(
 
 
 # --------------------------
-# Indexação de clips
+# Indexação de SEQUÊNCIA (modo sequência)
+# --------------------------
+def index_sequence_media(seq_dir: Path, mode: str) -> List[Path]:
+    """
+    mode: "image" ou "video"
+
+    Espera arquivos com nome começando por número:
+      - 1.png / 2.jpg / 003.webp
+      - 1.mp4 / 02.mov / 10.mkv
+
+    Ordena pelo número do prefixo (e por nome como desempate).
+    """
+    if not seq_dir.is_dir():
+        raise RuntimeError(f"Pasta de sequência não existe: {seq_dir}")
+
+    if mode not in {"image", "video"}:
+        raise RuntimeError(f"mode inválido: {mode} (use 'image' ou 'video')")
+
+    exts = IMAGE_EXTS if mode == "image" else VIDEO_EXTS
+
+    items: List[Tuple[int, Path]] = []
+    for p in seq_dir.iterdir():
+        if not p.is_file():
+            continue
+        if p.suffix.lower() not in exts:
+            continue
+        m = re.match(r"^\s*(\d+)", p.stem)
+        if not m:
+            continue
+        items.append((int(m.group(1)), p))
+
+    items.sort(key=lambda t: (t[0], t[1].name.lower()))
+    files = [p for _, p in items]
+
+    if not files:
+        raise RuntimeError(
+            f"Nenhum arquivo de sequência encontrado em {seq_dir}.\n"
+            f"Esperado: 1.png/2.jpg... (image) ou 1.mp4/2.mov... (video), sempre iniciando por número."
+        )
+    return files
+
+
+# --------------------------
+# Indexação de clips (tags -> vídeos)
 # --------------------------
 PROVIDER_PREFIXES = ("pixabay_", "pexels_", "mix_", "stock_")
 
@@ -447,7 +493,7 @@ def split_text_into_n_chunks(text: str, n: int) -> List[str]:
     start = 0
     for i in range(n):
         take = base + (1 if i < rem else 0)
-        out.append(" ".join(words[start : start + take]).strip())
+        out.append(" ".join(words[start: start + take]).strip())
         start += take
 
     return [re.sub(r"\s+", " ", o).strip() for o in out]
@@ -526,6 +572,9 @@ def fit_durations_with_bounds(
     return out
 
 
+# --------------------------
+# Builder original (tags -> vídeos)
+# --------------------------
 def build_scenes(
     blocks: List[ScriptBlock],
     audio_dur: float,
@@ -536,26 +585,76 @@ def build_scenes(
     min_scene: float,
     max_scene: float,
     seed: int,
-    tag_mode: str = "editor",   # editor|text (text = usa word_count / editor = profiles)
+    used_paths_in: Optional[Set[str]] = None,  # <-- NOVO (histórico por idioma vindo do make_episode)
+    history_policy: str = "strict",
+    tag_mode: str = "text",   # editor|text (text = usa word_count / editor = profiles)
+    avoid_tags: Optional[Set[str]] = None
 ) -> List[Scene]:
     rng = random.Random(seed)
     clips_index = index_clips(clips_root)
 
-    # controla arquivos já usados (path real) E nomes já usados (para evitar duplicar o mesmo vídeo)
-    used_paths: set[str] = set()
+    # normaliza avoid_tags (case-insensitive)
+    avoid_lc: Set[str] = set(x.lower() for x in (avoid_tags or set()) if x)
+
+    # controla arquivos já usados:
+    # - used_paths: impede repetir path (intra-render) e também aplica histórico (inter-episódio, por idioma)
+    # - used_names: impede repetir o mesmo arquivo por nome (caso haja duplicatas/paths diferentes)
+    used_paths: set[str] = set(used_paths_in) if used_paths_in else set()
     used_names: set[str] = set()
+
+    def _is_avoided(tag: Optional[str]) -> bool:
+        return bool(tag) and tag.lower() in avoid_lc
+
+    def _safe_fallback() -> str:
+        """
+        Retorna um fallback que:
+          - existe no inventário (clips_index)
+          - NÃO está em avoid
+        Ordem de preferência: fallback_tag -> secondary -> alguns padrões -> qualquer disponível
+        """
+        prefer = [
+            fallback_tag,
+            SECONDARY_FALLBACK_TAG,
+            "business",
+            "office_night",
+            "city",
+            "time",
+            "reflection",
+            "decision",
+            "expenses",
+            "data",
+        ]
+        for t in prefer:
+            if t and (not _is_avoided(t)) and (clips_index.get(t) or []):
+                return t
+
+        for t, pool in clips_index.items():
+            if pool and (not _is_avoided(t)):
+                return t
+
+        raise RuntimeError("avoid_tags removeu todas as tags disponíveis no inventário.")
 
     def pick_unique_clip(desired_tag: str) -> Tuple[str, Path]:
         """
         Resolve desired_tag -> (resolved_tag, clip_path) com:
           - sinônimos + fallback em cascata
           - anti-repeat global por arquivo e por nome
+          - avoid como hard constraint (não fura via sinônimos/fallback)
         """
+        safe_fb = _safe_fallback()
+
         candidates = [desired_tag]
         candidates += SIMILAR_TAGS.get(desired_tag, [])
-        candidates += [SECONDARY_FALLBACK_TAG, fallback_tag]
+        candidates += [SECONDARY_FALLBACK_TAG, safe_fb]
 
-        for t in _dedup_keep_order([c for c in candidates if (c or "").strip()]):
+        # dedup + remove vazios + remove evitados
+        cand2: List[str] = []
+        for c in _dedup_keep_order([c for c in candidates if (c or "").strip()]):
+            if _is_avoided(c):
+                continue
+            cand2.append(c)
+
+        for t in cand2:
             pool = clips_index.get(t) or []
             if not pool:
                 continue
@@ -576,10 +675,30 @@ def build_scenes(
             name_id_chosen = chosen.name.lower()
             used_paths.add(rp_chosen)
             used_names.add(name_id_chosen)
+
+            # resolved_tag é "t"; requested_tag será setado pelo chamador
             return (t, chosen)
 
+        if history_policy == "relax":
+            # permite repetir (apenas como último recurso), MAS ainda respeita avoid
+            for t in cand2:
+                pool = clips_index.get(t) or []
+                if pool:
+                    chosen = rng.choice(pool)
+                    used_paths.add(str(chosen.resolve()))
+                    used_names.add(chosen.name.lower())
+                    return (t, chosen)
+
+            # salvage: qualquer tag com inventário que não esteja em avoid
+            for t, pool in clips_index.items():
+                if pool and (not _is_avoided(t)):
+                    chosen = rng.choice(pool)
+                    used_paths.add(str(chosen.resolve()))
+                    used_names.add(chosen.name.lower())
+                    return (t, chosen)
+
         raise RuntimeError(
-            f"Sem clipes únicos disponíveis para '{desired_tag}' (nem sinônimos/fallbacks). "
+            f"Sem clipes disponíveis respeitando avoid para '{desired_tag}' (nem sinônimos/fallbacks). "
             f"Você precisa: (a) mais inventário, ou (b) reduzir cortes por bloco."
         )
 
@@ -633,6 +752,10 @@ def build_scenes(
             if not forced_all:
                 # Cai para o modo keywords se a lista de tags vier vazia
                 desired = choose_tag(b.text, tag_order, tags, fallback=fallback_tag)
+
+                if _is_avoided(desired):
+                    desired = _safe_fallback()
+
                 resolved_tag, clip_path = pick_unique_clip(desired)
                 scenes.append(
                     Scene(
@@ -641,6 +764,7 @@ def build_scenes(
                         duration=float(block_dur),
                         clip_path=clip_path,
                         forced_tags=None,
+                        requested_tag=desired,
                     )
                 )
                 continue
@@ -676,6 +800,10 @@ def build_scenes(
                 durs = [(w / s) * float(block_dur) for w in wcs]
 
             for t, tx, dur in zip(forced, chunks, durs):
+
+                if _is_avoided(t):
+                    t = _safe_fallback()
+
                 resolved_tag, clip_path = pick_unique_clip(t)
                 scenes.append(
                     Scene(
@@ -684,11 +812,17 @@ def build_scenes(
                         duration=float(dur),
                         clip_path=clip_path,
                         forced_tags=b.tags,
+                        requested_tag=t,
                     )
                 )
         else:
             # keywords mode: sempre 1 cena por bloco (desde que haja budget)
             desired = choose_tag(b.text, tag_order, tags, fallback=fallback_tag)
+
+            # aplica avoid também no modo keywords (hard, sem voltar pro proibido)
+            if _is_avoided(desired):
+                desired = _safe_fallback()
+
             resolved_tag, clip_path = pick_unique_clip(desired)
             scenes.append(
                 Scene(
@@ -697,8 +831,293 @@ def build_scenes(
                     duration=float(block_dur),
                     clip_path=clip_path,
                     forced_tags=None,
+                    requested_tag=desired,
                 )
             )
+
+    # 3) Ajusta durações finais para bater o áudio e respeitar bounds
+       # 3) Ajusta durações finais para bater o áudio e respeitar bounds
+    if scenes:
+        n_scenes = len(scenes)
+
+        # por padrão, respeita o min_scene_eff
+        fit_min = min_scene_eff
+        fit_max = max_scene_eff
+
+        # se tiver MUITA cena (ex.: 80, 100, 130...), relaxa o mínimo
+        # para não achatar tudo em min_scene_eff
+        if n_scenes > 60:
+            fit_min = max(0.8, min_scene_eff * 0.6)  # ex.: 3.0 -> 1.8
+
+        final_durs = fit_durations_with_bounds(
+            [s.duration for s in scenes],
+            total=audio_dur,
+            minv=fit_min,
+            maxv=fit_max,
+        )
+        for sc, d in zip(scenes, final_durs):
+            sc.duration = float(d)
+
+        # drift final
+        drift = audio_dur - sum(s.duration for s in scenes)
+        if abs(drift) > 0.02:
+            scenes[-1].duration = max(0.3, scenes[-1].duration + drift)
+
+    return scenes
+
+
+def _merge_blocks(blocks: List[ScriptBlock], n_target: int) -> List[ScriptBlock]:
+    if n_target <= 0:
+        return []
+    if len(blocks) <= n_target:
+        return blocks[:]
+
+    # agrupa adjacentes para reduzir quantidade
+    # estratégia simples: distribui em n_target buckets contíguos
+    buckets: List[List[ScriptBlock]] = [[] for _ in range(n_target)]
+    # tamanho aproximado de cada bucket
+    base = len(blocks) // n_target
+    rem = len(blocks) % n_target
+
+    idx = 0
+    for i in range(n_target):
+        take = base + (1 if i < rem else 0)
+        buckets[i] = blocks[idx: idx + take]
+        idx += take
+
+    merged: List[ScriptBlock] = []
+    for group in buckets:
+        if not group:
+            continue
+        texts = []
+        tags: List[str] = []
+        for b in group:
+            if b.text.strip():
+                texts.append(b.text.strip())
+            if b.tags:
+                tags.extend([t for t in b.tags if t])
+        tags = _dedup_keep_order(tags)
+        merged.append(ScriptBlock(tags=tags if tags else None, text="\n\n".join(texts).strip()))
+    return merged
+
+
+def _split_blocks(blocks: List[ScriptBlock], n_target: int) -> List[ScriptBlock]:
+    if n_target <= 0:
+        return []
+    if len(blocks) >= n_target:
+        return blocks[:]
+
+    out: List[ScriptBlock] = blocks[:]
+    # enquanto faltar, divide o maior bloco (por frases/palavras via split_text_into_n_chunks)
+    while len(out) < n_target:
+        # escolhe o bloco com mais palavras
+        i = max(range(len(out)), key=lambda k: word_count(out[k].text))
+        b = out.pop(i)
+        missing = n_target - len(out) + 1
+        # divide em no máximo 2 por iteração (controlado, evita explosão)
+        parts = split_text_into_n_chunks(b.text, 2 if missing > 1 else 1)
+        parts = [p for p in parts if p.strip()]
+        if len(parts) <= 1:
+            # não deu para dividir, reintroduz e quebra
+            out.insert(i, b)
+            break
+        # mantém tags iguais nas partes
+        for j, tx in enumerate(parts):
+            out.insert(i + j, ScriptBlock(tags=b.tags, text=tx))
+    return out
+
+
+def resample_blocks_to_n(blocks: List[ScriptBlock], n_target: int) -> List[ScriptBlock]:
+    blocks = [b for b in blocks if (b.text or "").strip()]
+    if not blocks:
+        return []
+    if n_target <= 0:
+        return blocks
+    if len(blocks) == n_target:
+        return blocks
+    if len(blocks) > n_target:
+        return _merge_blocks(blocks, n_target)
+    return _split_blocks(blocks, n_target)
+
+
+# --------------------------
+# Builder novo: SEQUÊNCIA (imagens OU vídeos)
+# --------------------------
+def build_scenes_sequence(
+    blocks: List[ScriptBlock],
+    audio_dur: float,
+    sequence_files: List[Path],
+    min_scene: float,
+    max_scene: float,
+    seed: int,
+    tag_mode: str = "editor",   # mantém o mesmo contrato: editor|text
+    seq_avg: Optional[float] = None,
+    seq_min: Optional[float] = None,
+    seq_max: Optional[float] = None,
+    seq_jitter: float = 0.18,
+    seq_max_scenes: int = 45,
+) -> List[Scene]:
+    """
+    Igual ao build_scenes em termos de durações/expansão,
+    mas o clip_path vem de sequence_files (1..N) em ordem, ciclando.
+
+    Observação: aqui o "tag" vira apenas "sequence" (informativo).
+    """
+    rng = random.Random(seed)
+
+    if not sequence_files:
+        raise RuntimeError("sequence_files vazio (nada para usar no modo sequência).")
+
+    idx_seq = 0
+
+    def next_media() -> Path:
+        nonlocal idx_seq
+        p = sequence_files[idx_seq % len(sequence_files)]
+        idx_seq += 1
+        return p
+
+    # se seq_avg foi fornecido, usa o modo "editorial por média"
+    if seq_avg is not None and seq_avg > 0 and audio_dur > 0:
+        eff_min = float(seq_min) if (seq_min is not None) else float(min_scene)
+        eff_max = float(seq_max) if (seq_max is not None) else float(max_scene)
+        eff_min = max(0.3, eff_min)
+        eff_max = max(eff_min + 0.2, eff_max)
+
+        n_target = int(round(audio_dur / float(seq_avg)))
+        n_target = max(1, n_target)
+        n_target = min(n_target, max(1, int(seq_max_scenes)))
+
+        blocks2 = resample_blocks_to_n(blocks, n_target)
+        if not blocks2:
+            return []
+
+        rng = random.Random(seed)
+
+        # durações iniciais: média + jitter (evita metronomo)
+        raw_durs: List[float] = []
+        for _ in blocks2:
+            j = float(seq_jitter)
+            j = max(0.0, min(j, 0.60))
+            d = float(seq_avg) * (1.0 + rng.uniform(-j, +j))
+            raw_durs.append(d)
+
+        # ajusta para somar audio_dur respeitando bounds
+        final_durs = fit_durations_with_bounds(raw_durs, total=audio_dur, minv=eff_min, maxv=eff_max)
+
+        scenes: List[Scene] = []
+        for b, dur in zip(blocks2, final_durs):
+            scenes.append(
+                Scene(
+                    tag="sequence",
+                    text=b.text,
+                    duration=float(dur),
+                    clip_path=next_media(),
+                    forced_tags=b.tags if b.tags else None,
+                    requested_tag=None,
+                )
+            )
+
+        drift = audio_dur - sum(s.duration for s in scenes)
+        if scenes and abs(drift) > 0.02:
+            scenes[-1].duration = max(0.3, scenes[-1].duration + drift)
+
+        return scenes
+
+    # 1) Duração base por BLOCO (proporcional a palavras)
+    texts = [b.text for b in blocks]
+    counts = [max(1, word_count(t)) for t in texts]
+    total_words = sum(counts) or 1
+
+    raw_block_durs = [(c / total_words) * audio_dur for c in counts]
+    raw_block_durs = [d * rng.uniform(0.90, 1.10) for d in raw_block_durs]
+
+    n_blocks = max(1, len(texts))
+    avg = audio_dur / n_blocks if audio_dur > 0 else min_scene
+
+    min_scene_eff = max(0.3, min(min_scene, avg * 0.90))
+    max_scene_eff = max(max_scene, min_scene_eff + 0.2)
+
+    block_durs = fit_durations_with_bounds(
+        raw_block_durs,
+        audio_dur,
+        min_scene_eff,
+        min(max_scene_eff, avg * 1.80),
+    )
+
+    # 1.1) Budget global de cenas (mesmo critério do build_scenes)
+    min_for_budget = max(0.3, min_scene_eff)
+    if audio_dur > 0 and min_for_budget > 0:
+        raw_max_scenes = int(audio_dur // min_for_budget)
+    else:
+        raw_max_scenes = len(blocks) or 1
+    max_scenes = max(1, raw_max_scenes)
+
+    # 2) Expande blocos em cenas (consome N itens da sequência)
+    scenes: List[Scene] = []
+    total_blocks = len(blocks)
+
+    for bi, (b, block_dur) in enumerate(zip(blocks, block_durs)):
+        remaining_blocks = total_blocks - bi
+        remaining_budget = max_scenes - len(scenes)
+
+        if remaining_budget <= 0:
+            break
+
+        if b.tags:
+            forced_all = select_forced_tags_for_block(b.tags)
+            if forced_all:
+                # respeita budget para não matar os blocos restantes
+                max_for_this_block = remaining_budget - (remaining_blocks - 1)
+                max_for_this_block = max(1, max_for_this_block)
+                max_for_this_block = min(
+                    max_for_this_block,
+                    len(forced_all),
+                    EDITOR_MAX_CUTS_PER_BLOCK,
+                )
+
+                forced = forced_all[:max_for_this_block]
+                n = max(1, len(forced))
+                chunks = split_text_into_n_chunks(b.text, n)
+
+                if tag_mode.lower() == "editor":
+                    durs = [
+                        pick_scene_duration_for_tag(
+                            t,
+                            rng,
+                            min_scene=min_scene_eff,
+                            max_scene=max_scene_eff,
+                        )
+                        for t in forced
+                    ]
+                else:
+                    wcs = [max(1, word_count(x)) for x in chunks]
+                    s = sum(wcs) or 1
+                    durs = [(w / s) * float(block_dur) for w in wcs]
+
+                for _t, tx, dur in zip(forced, chunks, durs):
+                    scenes.append(
+                        Scene(
+                            tag="sequence",
+                            text=tx,
+                            duration=float(dur),
+                            clip_path=next_media(),
+                            forced_tags=b.tags,
+                            requested_tag=None,
+                        )
+                    )
+                continue
+
+        # Sem tags úteis: 1 cena por bloco
+        scenes.append(
+            Scene(
+                tag="sequence",
+                text=b.text,
+                duration=float(block_dur),
+                clip_path=next_media(),
+                forced_tags=b.tags if b.tags else None,
+                requested_tag=None,
+            )
+        )
 
     # 3) Ajusta durações finais para bater o áudio e respeitar bounds
     if scenes:
@@ -711,7 +1130,6 @@ def build_scenes(
         for sc, d in zip(scenes, final_durs):
             sc.duration = float(d)
 
-        # drift final
         drift = audio_dur - sum(s.duration for s in scenes)
         if abs(drift) > 0.02:
             scenes[-1].duration = max(0.3, scenes[-1].duration + drift)

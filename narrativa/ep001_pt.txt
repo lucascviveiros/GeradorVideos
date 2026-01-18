@@ -1,4 +1,3 @@
-```
 Você já fez hora extra sem pedir.
 Já trabalhou fim de semana porque faltou gente.
 Já ouviu que quem se esforça vence.
@@ -16,34 +15,24 @@ Você vende horas.
 Recebe salário.
 Quer ganhar mais? Vende mais horas.
 
-Parece justo.
-
 Mas tem três problemas estruturais nessa conta.
 
 Primeiro: o dia tem vinte e quatro horas.
 Você começou no limite.
 
 Segundo: parou de vender tempo, parou de ganhar.
-Não existe acúmulo.
 
 Terceiro: quem compra seu tempo não compra você.
 Compra o que você entrega.
-
-E se aparecer alguém que entrega o mesmo por menos, você vira custo.
-E custo, o sistema sempre tenta cortar.
+E se aparecer alguém mais barato, você vira custo.
 
 Mas aqui está a verdade.
 
 O mercado nunca pagou por esforço.
-Ele paga por algo chamado captura de valor.
-
-Captura de valor funciona assim.
+Ele paga por captura de valor.
 
 Esforço vende tempo.
 Posição captura margem.
-
-Quem controla demanda, preço, distribuição ou alavancas do sistema fica com o dinheiro.
-Mesmo trabalhando menos horas.
 
 A enfermeira atende o paciente.
 Salva vidas.
@@ -53,15 +42,7 @@ Mas quem cobra é o hospital.
 Quem define preço é o plano.
 Quem captura a margem é o dono.
 
-Ela recebe salário fixo.
-Independente de quantos pacientes atendeu.
-Independente do valor cobrado.
-
-O sistema capturou o valor que ela gerou.
-
-Agora olha o sócio.
-
-Ele não atende paciente.
+O sócio não atende paciente.
 Não faz plantão.
 Aparece quinta-feira para reunião.
 
@@ -70,55 +51,14 @@ Ele captura percentual do faturamento.
 Todo mês.
 Sem vender uma hora do próprio tempo.
 
-Isso não é injustiça cósmica.
+Isso não é injustiça.
 É desenho de sistema.
-
-E enquanto você achar que a resposta é trabalhar mais, você vai continuar do lado errado da balança.
-
-Você conhece alguém que trabalha doze horas por dia numa fábrica.
-E alguém que trabalha quatro horas fechando contrato de fornecedor.
-
-Quem ganha mais?
-
-O segundo.
-
-Por quê?
-
-Porque ele está posicionado antes do valor ser criado.
-Ele negocia margem.
-Define fornecedor.
-Controla acesso.
-
-O operário da fábrica está posicionado durante a execução.
-Ele é linha de custo na planilha.
-
-E toda empresa quer reduzir custo.
-
-Por isso ela investe em automação.
-Por isso terceiriza.
-Por isso busca mão de obra mais barata.
-
-Não é maldade.
-É lógica de margem.
-
-Agora a objeção óbvia.
-
-Então estudar e trabalhar não serve?
-
-Serve.
-Mas só se você usar isso para reposicionar.
-
-Estudar te dá ferramenta.
-Trabalhar te dá experiência.
-
-Mas nenhum dos dois, sozinho, muda sua posição no fluxo de captura.
 
 Um entregador de app trabalha dez horas por dia.
 Conhece a cidade inteira.
-Tem experiência.
 
 Mas quem captura a margem é a plataforma.
-Ela controla demanda, preço e acesso ao cliente.
+Ela controla demanda, preço e acesso.
 
 O entregador vende tempo.
 A plataforma captura percentual de cada entrega.
@@ -128,47 +68,22 @@ Simultaneamente.
 Isso é escala.
 E escala muda tudo.
 
-Porque uma hora de trabalho posicionada na captura vale mais que cem horas posicionadas na execução.
-
-Outra objeção.
-
-Isso é papo de coach? De empreendedorismo?
-
-Não.
-
-Você não precisa virar empresário.
-Mas precisa entender onde você está na cadeia.
-
-Porque se você está sempre na execução, você compete por tempo.
-E tempo tem teto.
-
-Se você se posiciona perto da decisão, do acesso, da negociação, você compete por impacto.
-
-Impacto não tem teto.
-
-Um gerente que negocia contrato de cinco milhões captura mais valor em uma reunião do que um analista em seis meses de planilha.
-
-Não porque o trabalho do analista não importa.
-Mas porque ele está posicionado depois da decisão.
-
 Regra prática para amanhã.
 
 Faça um teste simples.
 
 Pegue a última coisa que você entregou no trabalho.
-Agora responda: se você não tivesse feito, o dinheiro da empresa cairia?
+Se você não tivesse feito, o dinheiro da empresa cairia?
 
 Se a resposta é não, você está vendendo tempo.
-Se a resposta é sim, pergunte: quanto do valor que você gerou voltou para você?
+Se a resposta é sim: quanto do valor voltou para você?
 
-Se a proporção é baixa, você está gerando valor.
-Mas quem está capturando é outra posição.
+Se a proporção é baixa, você gera valor.
+Mas quem captura é outra posição.
 
 A pergunta não é: como eu trabalho mais.
 
 A pergunta é: como eu reposiciono.
-
-Exemplo direto.
 
 Você resolve um problema repetitivo no trabalho.
 Cria uma planilha.
@@ -176,29 +91,12 @@ Economiza vinte horas por mês do time.
 
 Isso é valor.
 
-Mas se você não documenta, não mostra o impacto, não negocia com base nisso, você deixou o valor invisível.
+Mas se você não documenta, não mostra impacto, não negocia com base nisso, você deixou o valor invisível.
 
-E quando alguém perguntar: por que você merece ganhar mais?
-
-Você vai dizer: porque eu trabalho duro.
-
-E o sistema vai responder: todo mundo trabalha duro.
-
-Mas se você diz: eu criei um sistema que economiza X horas e gera Y de resultado, você mudou a conversa.
-
-Agora você não compete por esforço.
-Compete por posição.
-
-Outro movimento: transforme entrega em ativo.
-
-Entrega é algo que você faz uma vez e acabou.
-Ativo é algo que continua gerando valor depois que você parou.
+Transforme entrega em ativo.
 
 Um relatório é entrega.
 Um template que o time usa todo mês é ativo.
-
-Um atendimento é entrega.
-Um fluxo automatizado que resolve oitenta por cento das dúvidas é ativo.
 
 Ativo escala.
 Entrega não.
@@ -213,9 +111,7 @@ E o sistema não espera você descansar.
 
 Ele vai te trocar por alguém mais novo.
 Mais barato.
-Mais disponível.
-
-Ou por ninguém, porque descobriu que dava para automatizar.
+Ou por ninguém.
 
 Então a pergunta real não é: como eu posiciono valor.
 
@@ -234,13 +130,3 @@ O outro capturou posição.
 E posição não cansa.
 
 Posição captura valor enquanto você dorme.
-
-Agora a próxima pergunta.
-
-Se posicionar valor aumenta renda, por que tanta gente que ganha mais continua presa?
-
-Porque renda subiu.
-Mas o custo fixo subiu junto.
-
-E liberdade não aumentou.
-```
