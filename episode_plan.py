@@ -173,7 +173,8 @@ EDITOR_JITTER = 0.35
 class ScriptBlock:
     tags: Optional[List[str]]  # tags vindas do roteiro, sem '#'
     text: str
-
+    block_id: Optional[int] = None      # 001, 002, ...
+    core_idea: Optional[str] = None     # linha "Core idea: ..."
 
 @dataclass
 class Scene:
@@ -194,10 +195,17 @@ TAGS_LINE_RE = re.compile(
 )
 
 
+SCRIPT_BLOCK_HEADER_RE = re.compile(r"^\s*\[SCRIPT_BLOCKS\]\s*$", re.IGNORECASE)
+BLOCK_ID_RE = re.compile(r"^\s*(\d{3})\s*$")
+CORE_IDEA_RE = re.compile(r"^\s*Core idea:\s*(.*)$", re.IGNORECASE)
+
+
 def parse_script_blocks(text_path: Path) -> List[ScriptBlock]:
     """
-    Se houver pelo menos uma linha TAGS, entra em modo tagueado.
-    Texto antes da primeira TAG é ignorado.
+    - Se houver [SCRIPT_BLOCKS]: usa modo de blocos numerados (001, 002, ...).
+    - Caso contrário:
+        - Se houver TAGS: modo tagueado.
+        - Senão: fallback por parágrafos.
     """
     if not text_path.is_file():
         raise RuntimeError(f"Roteiro não encontrado: {text_path}")
@@ -209,6 +217,73 @@ def parse_script_blocks(text_path: Path) -> List[ScriptBlock]:
     )
     lines = raw.split("\n")
 
+    # -----------------------------
+    # 1) Modo [SCRIPT_BLOCKS]
+    # -----------------------------
+    has_script_blocks = any(SCRIPT_BLOCK_HEADER_RE.match(ln) for ln in lines)
+    if has_script_blocks:
+        blocks: List[ScriptBlock] = []
+        cur_id: Optional[int] = None
+        cur_core: Optional[str] = None
+        cur_lines: List[str] = []
+        in_section = False
+
+        def flush_block():
+            nonlocal cur_id, cur_core, cur_lines
+            if cur_id is None:
+                return
+            text = "\n".join(cur_lines).strip()
+            if not text:
+                return
+            blocks.append(
+                ScriptBlock(
+                    tags=None,
+                    text=text,
+                    block_id=cur_id,
+                    core_idea=(cur_core.strip() if cur_core else None),
+                )
+            )
+            cur_id = None
+            cur_core = None
+            cur_lines = []
+
+        for ln in lines:
+            if SCRIPT_BLOCK_HEADER_RE.match(ln):
+                in_section = True
+                continue
+            if not in_section:
+                continue
+
+            m_id = BLOCK_ID_RE.match(ln)
+            if m_id:
+                flush_block()
+                cur_id = int(m_id.group(1))
+                cur_core = None
+                cur_lines = []
+                continue
+
+            m_core = CORE_IDEA_RE.match(ln)
+            if m_core:
+                cur_core = m_core.group(1).strip()
+                continue
+
+            if ln.strip() == "":
+                continue
+            cur_lines.append(ln)
+
+        flush_block()
+
+        if not blocks:
+            raise RuntimeError("[SCRIPT_BLOCKS] detectado, mas nenhum bloco foi parseado.")
+
+        for b in blocks:
+            b.text = re.sub(r"\n{3,}", "\n\n", b.text.strip())
+
+        return blocks
+
+    # -----------------------------
+    # 2) Modo TAGS (comportamento antigo)
+    # -----------------------------
     blocks: List[ScriptBlock] = []
     cur_tags: Optional[List[str]] = None
     cur_text_lines: List[str] = []
@@ -221,7 +296,7 @@ def parse_script_blocks(text_path: Path) -> List[ScriptBlock]:
         t = t.strip().replace(" ", "_")
         return t
 
-    def flush() -> None:
+    def flush_tag_block() -> None:
         nonlocal cur_tags, cur_text_lines
         txt = "\n".join(cur_text_lines).strip()
         if txt:
@@ -238,7 +313,7 @@ def parse_script_blocks(text_path: Path) -> List[ScriptBlock]:
                 cur_text_lines = []
                 blocks = []
             else:
-                flush()
+                flush_tag_block()
 
             parts = [p.strip() for p in tag_part.split(",") if p.strip()]
             tags = [normalize_tag(p) for p in parts if normalize_tag(p)]
@@ -246,21 +321,23 @@ def parse_script_blocks(text_path: Path) -> List[ScriptBlock]:
             continue
 
         if not saw_any_tags:
-            # Ignora texto antes da primeira linha de TAG
             continue
 
         cur_text_lines.append(ln)
 
     if saw_any_tags:
-        flush()
+        flush_tag_block()
         return [
             ScriptBlock(tags=b.tags, text=re.sub(r"\n{3,}", "\n\n", b.text.strip()))
             for b in blocks
         ]
 
-    # fallback: modo antigo (sem TAGS) por parágrafos
+    # -----------------------------
+    # 3) Fallback: parágrafos
+    # -----------------------------
     paras = read_paragraphs(text_path)
     return [ScriptBlock(tags=None, text=p) for p in paras]
+
 
 
 def read_paragraphs(text_path: Path) -> List[str]:
@@ -336,6 +413,13 @@ def index_sequence_media(seq_dir: Path, mode: str) -> List[Path]:
       - 1.mp4 / 02.mov / 10.mkv
 
     Ordena pelo número do prefixo (e por nome como desempate).
+
+    NOVO COMPORTAMENTO:
+      - Prioriza o número logo após o primeiro "_" no stem.
+        Ex: "1_001__Anchor_A2__..." -> usa 001.
+      - Fallbacks:
+        (1) usa o número antes do primeiro "_" (comportamento antigo)
+        (2) usa o primeiro número encontrado no início do stem (ex: "42algumacoisa")
     """
     if not seq_dir.is_dir():
         raise RuntimeError(f"Pasta de sequência não existe: {seq_dir}")
@@ -351,10 +435,28 @@ def index_sequence_media(seq_dir: Path, mode: str) -> List[Path]:
             continue
         if p.suffix.lower() not in exts:
             continue
-        m = re.match(r"^\s*(\d+)", p.stem)
-        if not m:
+
+        parts = p.stem.split("_")
+
+        # 1) NOVO: pega o número depois do primeiro "_" (parts[1])
+        head2 = parts[1].strip() if len(parts) >= 2 else ""
+        m2 = re.match(r"^\d+$", head2)
+        if m2:
+            items.append((int(head2), p))
             continue
-        items.append((int(m.group(1)), p))
+
+        # 2) Fallback: comportamento antigo (antes do primeiro "_")
+        head0 = parts[0].strip() if parts else p.stem.strip()
+        m0 = re.match(r"^\d+$", head0)
+        if m0:
+            items.append((int(head0), p))
+            continue
+
+        # 3) Fallback final: ainda aceita "42algumacoisa" se existir
+        m3 = re.match(r"^\s*(\d+)", p.stem)
+        if not m3:
+            continue
+        items.append((int(m3.group(1)), p))
 
     items.sort(key=lambda t: (t[0], t[1].name.lower()))
     files = [p for _, p in items]
@@ -365,6 +467,7 @@ def index_sequence_media(seq_dir: Path, mode: str) -> List[Path]:
             f"Esperado: 1.png/2.jpg... (image) ou 1.mp4/2.mov... (video), sempre iniciando por número."
         )
     return files
+
 
 
 # --------------------------
@@ -1133,5 +1236,56 @@ def build_scenes_sequence(
         drift = audio_dur - sum(s.duration for s in scenes)
         if abs(drift) > 0.02:
             scenes[-1].duration = max(0.3, scenes[-1].duration + drift)
+
+    return scenes
+
+
+def build_scenes_sequence_blocks(
+    blocks: List[ScriptBlock],
+    audio_dur: float,
+    sequence_files: List[Path],
+    seed: int,
+) -> List[Scene]:
+    """
+    Modo 'por bloco':
+      - 1 bloco de [SCRIPT_BLOCKS] = 1 cena
+      - duração uniforme = audio_dur / n_blocks
+      - clip_path = sequence_files[i % len(sequence_files)]
+      - ignora min_scene/max_scene, word_count, tag_mode, etc.
+    """
+    if not blocks:
+        return []
+
+    if not sequence_files:
+        raise RuntimeError("sequence_files vazio (nada para usar no modo sequência por bloco).")
+
+    rng = random.Random(seed)  # só mantém interface, se quiser usar mais tarde
+
+    n = len(blocks)
+    if audio_dur > 0:
+        base_dur = float(audio_dur) / float(n)
+    else:
+        # fallback se por algum motivo audio_dur estiver 0 ou negativo
+        base_dur = 5.0
+
+    scenes: List[Scene] = []
+    for i, b in enumerate(blocks):
+        clip = sequence_files[i % len(sequence_files)]
+        scenes.append(
+            Scene(
+                tag="sequence_block",   # só informativo para log/debug
+                text=b.text,
+                duration=base_dur,
+                clip_path=clip,
+                forced_tags=b.tags if b.tags else None,
+                requested_tag=None,
+            )
+        )
+
+    # Ajuste fino de drift por conta de arredondamento
+    total = sum(s.duration for s in scenes)
+    drift = audio_dur - total
+    if scenes and abs(drift) > 0.02:
+        scenes[-1].duration = max(0.3, scenes[-1].duration + drift)
 
     return scenes

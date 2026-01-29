@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# Sequence Images
+# py -3.10 .\make_episode.py --channel_name decisao_invisivel --history_policy relax --audio .\audio\estrutura_001_en.mp3 --text .\narrativa\estrutura_001.txt --clips .\clips --langs en --use_sequence_image .\seq_imgs --out_pattern .\out\seq_{lang}.mp4 --tag_mode text --min_scene 7.0 --max_scene 11.0 --fps 30
+# evite --seq_avg/--seq_min/--seq_max enquanto sua regra for “número = corte”.
 
 from __future__ import annotations
 
-import json
-from typing import Set, Dict, Any, Optional
-
 import argparse
+import inspect
+import json
 from pathlib import Path
+from typing import Any, Dict, Optional, Set
 
 from episode_plan import (
     build_scenes,
-    build_scenes_sequence,      # <-- NOVO
-    index_sequence_media,       # <-- NOVO
+    build_scenes_sequence,  # <-- NOVO
+    index_sequence_media,   # <-- NOVO
     load_tags_yaml,
     parse_script_blocks,
 )
@@ -203,6 +206,17 @@ def _is_avoided(path: Path, avoid_folders: Optional[Set[str]]) -> bool:
     return any(a in parts for a in avoid_folders)
 
 
+def _call_render_video_compat(**kwargs):
+    """
+    Chama render_video passando SOMENTE os argumentos que existem na assinatura instalada.
+    Isso evita crash quando seu episode_render.py ainda não tem (ex.) zoom_supersample, zoom_preblur, etc.
+    """
+    sig = inspect.signature(render_video)
+    allowed = set(sig.parameters.keys())
+    filtered = {k: v for k, v in kwargs.items() if k in allowed}
+    return render_video(**filtered)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Auto-montagem: roteiro + áudio + clipes por tag.")
     ap.add_argument(
@@ -239,6 +253,19 @@ def main():
         default=".",
         help="Pasta base onde ficam os canais (default: .). Ex: ./channels",
     )
+
+    ap.add_argument("--ken_multiplier", type=float, default=1.0)
+    ap.add_argument("--zoom_multiplier", type=float, default=1.0)
+
+    # NOVO: parâmetros avançados de zoom (serão repassados para episode_render.py se ele suportar)
+    ap.add_argument("--zoom_supersample", type=int, default=1)
+    ap.add_argument("--zoom_quantize_px", type=int, default=1)
+    ap.add_argument("--zoom_preblur", type=float, default=0.0)
+    ap.add_argument("--zoom_force_even", type=int, default=0)
+    ap.add_argument("--zoom_min", type=float, default=None)
+    ap.add_argument("--zoom_max", type=float, default=None)
+    ap.add_argument("--zoom_prob", type=float, default=None)
+    ap.add_argument("--zoom_mode", default=None, choices=["auto", "in", "out"])
 
     ap.add_argument("--audio", required=True)
     ap.add_argument("--text", required=False)
@@ -310,11 +337,11 @@ def main():
     ap.add_argument(
         "--seq_jitter",
         type=float,
-       default=0.18,
+        default=0.18,
         help="(sequência) variação relativa em torno de seq_avg (0.18 = ±18%%).",
     )
     ap.add_argument(
-        "--seq Reid_max_scenes",
+        "--seq_max_scenes",
         type=int,
         default=45,
         help="(sequência) teto duro de cenas (evita 90+ cortes).",
@@ -362,9 +389,16 @@ def main():
 
     def resolve_out_for_lang(lang: str) -> Path:
         if args.out_pattern:
-            return resolve_path(args.out_pattern.format(lang=lang), must_exist=False, is_dir=False)
-        p = Path(args.out)
-        return resolve_path(str(p.with_name(f"{p.stem}_{lang}{p.suffix}")), must_exist=False, is_dir=False)
+            outp = resolve_path(args.out_pattern.format(lang=lang), must_exist=False, is_dir=False)
+        else:
+            p = Path(args.out)
+            outp = resolve_path(str(p.with_name(f"{p.stem}_{lang}{p.suffix}")), must_exist=False, is_dir=False)
+
+        # Safety net: se vier sem extensão (ou com extensão não-vídeo), força .mp4
+        if outp.suffix.lower() not in {".mp4", ".mov", ".mkv", ".m4v", ".webm"}:
+            outp = outp.with_suffix(".mp4")
+
+        return outp
 
     cache_dir_p = resolve_path(args.cache_dir, must_exist=False, is_dir=True)
 
@@ -382,7 +416,6 @@ def main():
 
     if history_p is not None:
         history_data = load_history(history_p, args.history_reset)
-
 
     # --- avoid tags (por canal): ./<channel_name>/avoid.json ---
     avoid_tags: Set[str] = set()
@@ -402,8 +435,6 @@ def main():
         else:
             # Se você preferir falhar aqui, troque por RuntimeError(...)
             print(f"[INFO] --avoid ligado, mas {avoid_p} não existe ou está vazio.")
-
-
 
     for lang in langs:
         audio_lang = resolve_audio_for_lang(lang)
@@ -544,7 +575,25 @@ def main():
             test_preset = "ultrafast"
             test_audio_bitrate = "96k"
 
-        render_video(
+        # kwargs opcionais (só passam para episode_render.py se ele suportar)
+        zoom_kwargs = {
+            "zoom_multiplier": args.zoom_multiplier,
+            "ken_multiplier": args.ken_multiplier,
+            "zoom_supersample": args.zoom_supersample,
+            "zoom_quantize_px": args.zoom_quantize_px,
+            "zoom_preblur": args.zoom_preblur,
+            "zoom_force_even": bool(args.zoom_force_even),
+        }
+        if args.zoom_min is not None:
+            zoom_kwargs["zoom_min"] = float(args.zoom_min)
+        if args.zoom_max is not None:
+            zoom_kwargs["zoom_max"] = float(args.zoom_max)
+        if args.zoom_prob is not None:
+            zoom_kwargs["zoom_prob"] = float(args.zoom_prob)
+        if args.zoom_mode is not None:
+            zoom_kwargs["zoom_mode"] = str(args.zoom_mode)
+
+        _call_render_video_compat(
             scenes=scenes,
             audio_path=audio_lang,
             out_path=out_lang,
@@ -565,6 +614,7 @@ def main():
             test_crf=test_crf,
             test_preset=test_preset,
             test_audio_bitrate=test_audio_bitrate,
+            **zoom_kwargs,
         )
 
         # atualiza histórico após render (por idioma, registrando episódio onde apareceu)

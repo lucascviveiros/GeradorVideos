@@ -3,7 +3,9 @@
 
 # Exemplo:
 # normal: py -3.10 .\make_audio.py --episode ep001 --narr_dir narrativa --out_dir audio --langs pt,en,es --gpu --voices_dir voices
-# FAST: py -3.10 .\make_audio.py --episode ep001 --narr_dir narrativa --out_dir audio --langs pt --gpu --voices_dir voices --segments --normalize_wavs --max_chars 420 --min_chars 140 --mp3_vbr_q 2 --speed 1.20
+# FAST: 
+# 
+# py -3.10 .\make_audio.py --episode ep001 --narr_dir narrativa --out_dir audio --langs pt, en, es --gpu --voices_dir voices --segments --normalize_wavs --max_chars 420 --min_chars 140 --mp3_vbr_q 2 --speed 1.18
 # (Opcional) ainda aceita --text como compat, mas o modo recomendado é acima.
 
 # convertendo para wav
@@ -12,8 +14,8 @@
 #ffmpeg -hide_banner -loglevel error -y -i "X:\GeradorVideos\voices\voice_es.mp3" -vn -ac 1 -ar 24000 -c:a pcm_s16le "X:\GeradorVideos\voices\voice_es.wav"
 
 #BEST ALL LANGUAGES
-#py -3.10 .\make_audio.py --episode ep001 --narr_dir narrativa --out_dir audio --langs pt,en,es --gpu --voices_dir voices --segments --normalize_wavs --max_chars 420 --min_chars 130 --mp3_vbr_q 2 --speed 1.20
-
+#py -3.10 .\make_audio.py --episode estrutura_001_en --narr_dir narrativa --out_dir audio --langs en --gpu --voices_dir voices --segments --normalize_wavs --max_chars 420 --min_chars 130 --mp3_vbr_q 2 --speed 1.18                                                                                                                    
+        
 
 """
 Coqui XTTS v2 (local) - Batch TTS PT/EN/ES
@@ -220,6 +222,15 @@ def tts_piece_to_wav(
     sample_rate: int,
     debug_silence: bool = False,
 ) -> None:
+    """
+    Gera áudio via XTTS e salva WAV PCM16 evitando clipping ("estourado").
+
+    Estratégia:
+    - Converte para float32
+    - Faz peak-normalize se houver pico acima do target
+    - (Opcional) soft-clip leve via tanh para domar transientes agressivos
+    - Grava PCM_16
+    """
     ensure_soundfile()
     wav_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -229,16 +240,45 @@ def tts_piece_to_wav(
         language=language,
     )
 
+    # -------------------------
+    # Anti-clipping (cirúrgico)
+    # -------------------------
+    try:
+        import numpy as np
+
+        x = np.asarray(wav, dtype=np.float32)
+        if x.size:
+            peak = float(np.max(np.abs(x)))
+
+            # headroom seguro (evita clip ao quantizar para PCM16)
+            target_peak = 0.92  # ~ -0.7 dBFS; se ainda estourar, use 0.90 ou 0.88
+
+            if peak > 0 and peak > target_peak:
+                x *= (target_peak / peak)
+
+            # Soft-clip MUITO leve (ative se ainda houver "rasgado" em sibilância)
+            # x = np.tanh(1.05 * x) / np.tanh(1.05)
+
+        wav = x
+    except Exception:
+        # Se numpy não estiver disponível, seguimos sem normalização.
+        pass
+    # -------------------------
+
     if debug_silence:
         try:
             i0, i1 = detect_silence_edges(wav, thr=0.002, pad=0)
             lead = i0 / float(sample_rate)
             tail = (len(wav) - 1 - i1) / float(sample_rate)
-            print(f"    [silence] lead={lead:.3f}s tail={tail:.3f}s len={len(wav)/float(sample_rate):.2f}s")
+            print(
+                f"    [silence] lead={lead:.3f}s tail={tail:.3f}s "
+                f"len={len(wav)/float(sample_rate):.2f}s"
+            )
         except Exception:
             pass
 
     sf.write(str(wav_path), wav, int(sample_rate), subtype="PCM_16")
+
 
 
 def ffmpeg_normalize_wav(
@@ -297,6 +337,11 @@ def ffmpeg_encode_mp3_from_wav(
     vbr_q: Optional[int],
     speed: float,
 ) -> None:
+    """
+    Encoda WAV -> MP3 (LAME), com:
+    - atempo para speed (se != 1.0)
+    - limiter final para evitar clipping/“estourado” pós-filtro/quantização
+    """
     out_mp3.parent.mkdir(parents=True, exist_ok=True)
 
     def atempo_filter(speed_val: float) -> Optional[str]:
@@ -304,29 +349,45 @@ def ffmpeg_encode_mp3_from_wav(
             return None
 
         parts: List[str] = []
-        s = speed_val
+        s = float(speed_val)
+
+        # ffmpeg atempo aceita [0.5, 2.0]; encadeia se necessário
         while s > 2.0:
             parts.append("atempo=2.0")
             s /= 2.0
         while s < 0.5:
             parts.append("atempo=0.5")
             s /= 0.5
+
         parts.append(f"atempo={s:.6f}".rstrip("0").rstrip("."))
         return ",".join(parts)
 
+    # Monta filtro: (atempo se precisar) + limiter sempre no final
+    filt_parts: List[str] = []
+    a = atempo_filter(speed)
+    if a:
+        filt_parts.append(a)
+
+    # Limiter simples e eficaz contra overs pós atempo/encode
+    # 0.95 ≈ -0.45 dBFS (seguro); ajuste para 0.98 se quiser mais volume
+    filt_parts.append("alimiter=limit=0.95")
+
     cmd = [FFMPEG_EXE, "-y", "-i", str(in_wav)]
-    filt = atempo_filter(speed)
-    if filt:
-        cmd += ["-filter:a", filt]
+
+    if filt_parts:
+        cmd += ["-filter:a", ",".join(filt_parts)]
 
     cmd += ["-c:a", "libmp3lame"]
+
+    # Se vbr_q vier definido, use VBR; senão, CBR bitrate
     if vbr_q is not None:
-        cmd += ["-q:a", str(vbr_q)]
+        cmd += ["-q:a", str(int(vbr_q))]
     else:
-        cmd += ["-b:a", bitrate]
+        cmd += ["-b:a", str(bitrate)]
 
     cmd += [str(out_mp3)]
     _run(cmd)
+
 
 
 def get_voice_wav_for_lang(voices_dir: Path, lang: str, wav_sr: int) -> Path:
