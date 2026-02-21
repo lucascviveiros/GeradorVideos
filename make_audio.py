@@ -136,6 +136,48 @@ def read_paragraphs(txt_path: Path) -> List[str]:
     # Parágrafo = bloco separado por linha em branco
     return [p.strip() for p in re.split(r"\n\s*\n+", raw) if p.strip()]
 
+def cap_internal_silences(samples, sample_rate: int, thr: float = 0.002, max_sil_ms: int = 350):
+    """
+    Limita silêncios internos (|x| < thr) para no máximo max_sil_ms.
+    Preserva pausas curtas, só encurta buracos longos.
+    Requer numpy.
+    """
+    import numpy as np
+
+    x = np.asarray(samples, dtype=np.float32)
+    if x.size == 0 or max_sil_ms <= 0:
+        return x
+
+    max_len = int(sample_rate * (max_sil_ms / 1000.0))
+    if max_len <= 0:
+        return x
+
+    silent = (np.abs(x) < thr).astype(np.int8)
+    if not silent.any():
+        return x
+
+    changes = np.diff(silent)
+    starts = np.where(changes == 1)[0] + 1
+    ends = np.where(changes == -1)[0] + 1
+
+    if silent[0] == 1:
+        starts = np.r_[0, starts]
+    if silent[-1] == 1:
+        ends = np.r_[ends, len(silent)]
+
+    out = []
+    last = 0
+    for s, e in zip(starts, ends):
+        out.append(x[last:s])
+        run = e - s
+        if run > max_len:
+            out.append(x[s:s + max_len])  # mantém só o começo do silêncio
+        else:
+            out.append(x[s:e])
+        last = e
+    out.append(x[last:])
+
+    return np.concatenate(out)
 
 def detect_silence_edges(samples, thr: float = 0.002, pad: int = 0):
     # fallback simples caso numpy não exista.
@@ -223,13 +265,11 @@ def tts_piece_to_wav(
     debug_silence: bool = False,
 ) -> None:
     """
-    Gera áudio via XTTS e salva WAV PCM16 evitando clipping ("estourado").
-
-    Estratégia:
-    - Converte para float32
-    - Faz peak-normalize se houver pico acima do target
-    - (Opcional) soft-clip leve via tanh para domar transientes agressivos
-    - Grava PCM_16
+    Versão A preservada (prosódia boa), com ajuste cirúrgico de pausas:
+    - trim de silêncio nas bordas (start/end)
+    - cap de silêncios internos longos (mata "mudo por muito tempo" sem destruir respiração)
+    - fade curto anti-click (concat mais limpa)
+    - mantém peak normalize original
     """
     ensure_soundfile()
     wav_path.parent.mkdir(parents=True, exist_ok=True)
@@ -240,30 +280,44 @@ def tts_piece_to_wav(
         language=language,
     )
 
-    # -------------------------
-    # Anti-clipping (cirúrgico)
-    # -------------------------
     try:
         import numpy as np
 
         x = np.asarray(wav, dtype=np.float32)
         if x.size:
-            peak = float(np.max(np.abs(x)))
+            # (opcional mas ajuda) remove DC offset
+            x = x - float(np.mean(x))
 
-            # headroom seguro (evita clip ao quantizar para PCM16)
-            target_peak = 0.92  # ~ -0.7 dBFS; se ainda estourar, use 0.90 ou 0.88
+            trim_thr = 0.002
 
+            # 1) trim bordas (evita acumular silêncio na concat)
+            pad = int(sample_rate * 0.015)  # 15ms
+            i0, i1 = detect_silence_edges(x, thr=trim_thr, pad=0)
+            i0 = max(i0 - pad, 0)
+            i1 = min(i1 + pad, len(x) - 1)
+            if i1 >= i0:
+                x = x[i0:i1 + 1]
+
+            # 2) cap silêncios internos longos (principal fix)
+            # ajuste aqui: 250–500ms (350ms é um bom meio-termo)
+            x = cap_internal_silences(x, sample_rate=sample_rate, thr=trim_thr, max_sil_ms=350)
+
+            # 3) peak normalize (seu original)
+            peak = float(np.max(np.abs(x))) if x.size else 0.0
+            target_peak = 0.92
             if peak > 0 and peak > target_peak:
                 x *= (target_peak / peak)
 
-            # Soft-clip MUITO leve (ative se ainda houver "rasgado" em sibilância)
-            # x = np.tanh(1.05 * x) / np.tanh(1.05)
+            # 4) fade curto anti-click
+            f = int(sample_rate * 0.008)  # 8ms
+            if f > 0 and len(x) > 2 * f:
+                ramp = np.linspace(0.0, 1.0, f, dtype=np.float32)
+                x[:f] *= ramp
+                x[-f:] *= ramp[::-1]
 
         wav = x
     except Exception:
-        # Se numpy não estiver disponível, seguimos sem normalização.
         pass
-    # -------------------------
 
     if debug_silence:
         try:
@@ -278,7 +332,6 @@ def tts_piece_to_wav(
             pass
 
     sf.write(str(wav_path), wav, int(sample_rate), subtype="PCM_16")
-
 
 
 def ffmpeg_normalize_wav(

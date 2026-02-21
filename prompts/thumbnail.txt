@@ -1,0 +1,26 @@
+ep1) Graphic editorial illustration, simplified ultra-minimal flat drawing style with bold clean outlines and reduced detail.
+Strict black and white illustration with a single accent color: red used ONLY for the word “DROPS”.
+Landscape 16:9 composition, high contrast, large flat areas, vector-like clarity.
+
+Close-up framing: the main subject fills the frame.
+Three oversized wristwatches, perfectly identical, upright, aligned horizontally across the center, straps cropped by the frame edges (so they feel huge).
+Same abstract hand positions on all three identical watches (strong repetition).
+To the far right, one watch is clearly broken and out of pattern: tilted, strap open, cracked face with a few simple geometric shards (minimal, clean), slightly separated from the three.
+No readable numbers, no brand marks, purely geometric watch faces.
+
+Background: pure clean negative space (no desk, no office items, no people, no outlets, no lamps, no extra props).
+Design-forward editorial composition with the broken watch placed near a right-side power point (rule of thirds).
+Calm but unsettling analytical mood.
+
+Add bold editorial text in the upper left corner reading:
+ENERGY
+DROPS
+
+Typography must match a modern editorial headline style: clean geometric sans-serif, condensed, extra-bold/black weight (Inter Black / Montserrat ExtraBold / Anton-style).
+All caps, tight tracking (slightly condensed/closed letter spacing), compact line-height (tight line spacing), crisp vector edges.
+Very large size (dominant), left-aligned, two-line layout.
+Color: “ENERGY” in black, “DROPS” in solid red.
+No outline, no shadow, no decoration.
+Text sits in empty space and does not overlap the watches.
+
+No logos, no UI, no interface elements, no dramatic effects.
